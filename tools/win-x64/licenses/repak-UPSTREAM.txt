@@ -1,0 +1,12 @@
+repak
+https://github.com/trumank/repak
+
+Pinned commit: 355b5f62f51959c7cc6dd5a51708646ef483065d
+Commit date: 2026-02-20
+Reason: fixes the i32::MIN deleted/pruned PAK-entry sentinel encountered in
+Hibiki-WindowsNoEditor_0_P.pak.
+
+Local repak.exe SHA-256:
+ABD3D3E979C10DBB6D40EDE82028AFF53B0BCB9E114DE6D5436E26B8B4B34C1F
+
+License: MIT OR Apache-2.0. See the adjacent license files.

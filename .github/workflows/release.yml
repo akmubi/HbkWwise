@@ -1,0 +1,75 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-2025
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Install .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+
+      - name: Select package version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$') {
+              throw "Release tags must look like v1.2.3."
+            }
+            $version = $Matches.version
+          }
+          else {
+            [xml]$props = Get-Content -LiteralPath ./Directory.Build.props
+            $version = [string]$props.Project.PropertyGroup.Version
+          }
+          "PACKAGE_VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Build and test release
+        shell: pwsh
+        run: ./distribution/Build-Release.ps1 -Version $env:PACKAGE_VERSION
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: HbkWwise-${{ env.PACKAGE_VERSION }}-win-x64
+          path: |
+            artifacts/HbkWwise-*-win-x64.zip
+            artifacts/HbkWwise-*-Setup.exe
+            artifacts/HbkWwise-*-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(
+            Get-ChildItem -LiteralPath ./artifacts -File |
+              Where-Object Name -Match '^HbkWwise-.+-(win-x64\.zip|Setup\.exe|SHA256SUMS\.txt)$' |
+              ForEach-Object FullName
+          )
+          if ($assets.Count -eq 0) {
+            throw 'No release assets were produced.'
+          }
+          gh release create $env:GITHUB_REF_NAME $assets --verify-tag --generate-notes

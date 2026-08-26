@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+    <Version>0.1.0</Version>
+    <Product>HBK Wwise</Product>
+    <Authors>HBK Wwise contributors</Authors>
+    <Company>HBK Wwise contributors</Company>
+    <Copyright>Copyright © 2026 HBK Wwise contributors</Copyright>
+    <Description>Wwise audio modding workbench for Hi-Fi RUSH.</Description>
+    <NeutralLanguage>en</NeutralLanguage>
+  </PropertyGroup>
+</Project>

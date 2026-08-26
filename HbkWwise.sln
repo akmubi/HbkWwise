@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HbkWwise.Core", "src\HbkWwise.Core\HbkWwise.Core.csproj", "{A76492A6-4769-4680-98E4-FFCBF8C1BEE1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HbkWwise.Core.Tests", "tests\HbkWwise.Core.Tests\HbkWwise.Core.Tests.csproj", "{B30CA8B8-2DAF-4188-A2A3-5047E604A9B5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HbkWwise.Gui", "src\HbkWwise.Gui\HbkWwise.Gui.csproj", "{9E14719D-E772-4B14-B6A2-34941E866AA2}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{A76492A6-4769-4680-98E4-FFCBF8C1BEE1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A76492A6-4769-4680-98E4-FFCBF8C1BEE1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A76492A6-4769-4680-98E4-FFCBF8C1BEE1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A76492A6-4769-4680-98E4-FFCBF8C1BEE1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B30CA8B8-2DAF-4188-A2A3-5047E604A9B5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B30CA8B8-2DAF-4188-A2A3-5047E604A9B5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B30CA8B8-2DAF-4188-A2A3-5047E604A9B5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B30CA8B8-2DAF-4188-A2A3-5047E604A9B5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9E14719D-E772-4B14-B6A2-34941E866AA2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9E14719D-E772-4B14-B6A2-34941E866AA2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9E14719D-E772-4B14-B6A2-34941E866AA2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9E14719D-E772-4B14-B6A2-34941E866AA2}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

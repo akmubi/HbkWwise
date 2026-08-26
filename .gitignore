@@ -1,0 +1,11 @@
+bin/
+obj/
+.vs/
+.hbkwwise/
+.dotnet-home/
+.build/
+artifacts/
+TestResults/
+tools/win-x64/oo2core_9_win64.dll
+*.user
+*.suo

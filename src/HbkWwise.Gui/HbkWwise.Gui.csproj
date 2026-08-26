@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>HbkWwise</AssemblyName>
+    <ApplicationIcon>Assets\HbkWwise.ico</ApplicationIcon>
+    <!-- Avalonia's optional statistics task fails the build on locked-down user profiles. -->
+    <UsedAvaloniaProducts></UsedAvaloniaProducts>
+  </PropertyGroup>
+  <ItemGroup>
+    <AvaloniaResource Include="Assets\HbkWwise.png" />
+    <PackageReference Include="NAudio.WinMM" Version="2.3.0" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.20" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.20" />
+    <ProjectReference Include="..\HbkWwise.Core\HbkWwise.Core.csproj" />
+    <Content Include="..\..\tools\win-x64\repak.exe" Link="tools\win-x64\repak.exe" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\tools\win-x64\licenses\**\*" Link="tools\win-x64\licenses\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\docs\images\**\*" Link="docs\images\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\LICENSE.txt" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

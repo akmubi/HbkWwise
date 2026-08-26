@@ -1,0 +1,55 @@
+HBK Wwise third-party notices
+=============================
+
+This file describes the dependency policy for official HBK Wwise packages.
+Exact license and notice texts are placed in the package's `licenses` folder
+by `distribution/Build-Release.ps1`.
+
+Included components
+-------------------
+
+* .NET 8 Windows runtime - distributed as part of the self-contained Windows
+  build. Microsoft/.NET Foundation licensing and third-party notices are in
+  `licenses/dotnet`.
+* Avalonia 11.3.20, including Avalonia Win32, Skia, and ANGLE packages - MIT;
+  native-component notices are in `licenses/nuget`.
+* NAudio.Core and NAudio.WinMM 2.3.0 - MIT.
+* SkiaSharp 2.88.9 and HarfBuzzSharp 8.3.1.1 - MIT; their native third-party
+  notices are in `licenses/nuget`.
+* MicroCom.Runtime 0.11.0, System.IO.Pipelines 8.0.0, and other resolved
+  Avalonia runtime dependencies - permissive licenses recorded in NuGet
+  package metadata and copied into `licenses/nuget` when a license file is
+  present.
+* repak, pinned at commit 355b5f62f51959c7cc6dd5a51708646ef483065d
+  - MIT OR Apache-2.0. Both upstream license texts and the binary SHA-256 are
+  in `tools/win-x64/licenses`.
+
+Deliberately not included
+-------------------------
+
+Official public packages do not contain any of the following:
+
+* `oo2core_9_win64.dll` (Oodle). It is proprietary. The bundled repak obtains
+  its compatible runtime when it first needs to read Oodle-compressed data,
+  or the user may place a legally obtained copy next to repak. The file is
+  never part of the release archive.
+* Wwise or `WwiseConsole.exe`. Wwise 2019.2.15.7667 must be installed by the
+  user under Audiokinetic's terms.
+* wwiser. Its upstream repository does not currently contain an explicit
+  redistribution license; users provide their own copy.
+* Python. Users install a supported Python 3 distribution separately.
+* vgmstream binaries. The vgmstream project itself has a permissive ISC-style
+  license, but prebuilt Windows archives can contain additional codec
+  components. Users provide their preferred build so the HBK Wwise package
+  does not silently assume redistribution rights for that complete archive.
+* Hi-Fi RUSH game files, generated indexes, extracted BNKs/WEMs, projects,
+  mods, AES keys, or any other user/game content.
+
+Trademarks and affiliation
+--------------------------
+
+HBK Wwise is an independent community tool. It is not affiliated with,
+endorsed by, or sponsored by Tango Gameworks, Krafton, Audiokinetic, Epic Games,
+or NVIDIA. Hi-Fi RUSH, Wwise, Unreal Engine, Oodle, and all other product names
+and marks belong to their respective owners.
+

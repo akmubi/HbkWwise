@@ -1011,18 +1011,16 @@ public sealed partial class MainWindow : Window
     {
         var play = MenuAction("Play", PlayImportedAudioAsync);
         var add = MenuAction("Add to selected track at playhead", (_, _) => AddImportedAtPlayhead());
-        var replace = MenuAction("Replace selected timeline audio", (_, _) => ReplaceSelectedWithImportedAudio());
         var remove = MenuAction("Remove imported source", (_, _) => RemoveImportedAudio());
         var menu = new ContextMenu
         {
-            ItemsSource = new Control[] { play, add, replace, new Separator(), remove }
+            ItemsSource = new Control[] { play, add, new Separator(), remove }
         };
 
         menu.Opening += (_, _) =>
         {
             importedAudioList.SelectedItem = audio;
             add.IsEnabled = timeline.SelectedTrackId is not null;
-            replace.IsEnabled = (loadedTimeline is not null || ActiveStandaloneMedia is not null) && timeline.SelectedClipId is not null;
         };
         return menu;
     }
@@ -4360,16 +4358,13 @@ public sealed partial class MainWindow : Window
             var (_, selectedClip) = document.FindClip(timeline.SelectedClipId.Value);
             var catalogItem = CatalogItemForTimelineClip(selectedClip);
             var playClip = MenuAction("Play selected clip", PlaySelectedClipAsync);
-            var replaceClip = MenuAction("Replace audio", ReplaceSelectedAudioAsync);
             var fadeIn = MenuAction("Fade in", (_, _) => MakeFadeFromSelection(MusicTimelineFadeKind.FadeIn));
             var fadeOut = MenuAction("Fade out", (_, _) => MakeFadeFromSelection(MusicTimelineFadeKind.FadeOut));
-            replaceClip.IsEnabled = loadedTimeline is not null || ActiveStandaloneMedia is not null;
             fadeIn.IsEnabled = timeline.SelectionEndMs - timeline.SelectionStartMs > 1;
             fadeOut.IsEnabled = fadeIn.IsEnabled;
 
             items.Add(playClip);
             items.Add(MenuAction("Calculate BPM", CalculateSelectedBpmAsync));
-            items.Add(replaceClip);
             items.Add(MenuAction("Copy clip", (_, _) => CopySelectedClip()));
             items.Add(MenuAction("Copy clip name", async (_, _) => await CopyTextAsync(selectedClip.Name)));
             if (catalogItem is not null)
@@ -4503,58 +4498,6 @@ public sealed partial class MainWindow : Window
         mixRefreshStartMs = timeline.PlayheadMs;
         pauseAfterMixRefresh = previewPlayer.State == AudioPreviewState.Paused;
         PlayTimelineAsync(null, new RoutedEventArgs());
-    }
-
-    private async void ReplaceSelectedAudioAsync(object? sender, RoutedEventArgs e)
-    {
-        if (loadedTimeline is null && ActiveStandaloneMedia is null || timeline.SelectedClipId is not { } clipId)
-        {
-            SetStatus("Select a clip in a composition or sound editor first", GuiLogLevel.Warning);
-            return;
-        }
-
-        var (_, clip) = document.FindClip(clipId);
-        if (clip.MediaId is not { } mediaId)
-        {
-            SetStatus("The selected block is not an original Wwise media reference", GuiLogLevel.Warning);
-            return;
-        }
-
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = ActiveStandaloneMedia is null
-                ? $"Choose replacement for media {mediaId} in this composition"
-                : $"Choose replacement for sound {mediaId}",
-            AllowMultiple = false,
-            FileTypeFilter = [new FilePickerFileType("Replacement audio") { Patterns = ["*.wav", "*.mp3", "*.flac", "*.ogg", "*.wem"] }]
-        });
-        if (files.FirstOrDefault()?.TryGetLocalPath() is not { } path)
-        {
-            return;
-        }
-
-        try
-        {
-            SetStatus($"Inspecting replacement audio {Path.GetFileName(path)}");
-            var audio = await ImportAudioAsync(path);
-            if (ActiveStandaloneMedia is not null)
-            {
-                AssignStandaloneReplacement(mediaId, audio);
-            }
-            else if (clip.ReplacementMediaId is { } importedId && scopeImports.ContainsKey(importedId))
-            {
-                AssignStructuralImport(importedId, audio);
-            }
-            else
-            {
-                AssignImportedReplacement(mediaId, audio);
-            }
-        }
-        catch (Exception exception)
-        {
-            scopeReplacements.Remove(mediaId);
-            SetFailure("Replacement failed", exception);
-        }
     }
 
     private async void BuildScopedPakAsync(object? sender, RoutedEventArgs e)
@@ -5239,48 +5182,6 @@ public sealed partial class MainWindow : Window
             MarkProjectDirty();
             SetStatus($"Removed imported source {item.Name} (timeline blocks are unchanged)");
         }
-    }
-
-    private void ReplaceSelectedWithImportedAudio()
-    {
-        if (loadedTimeline is null && ActiveStandaloneMedia is null || timeline.SelectedClipId is not { } clipId)
-        {
-            SetStatus("Select a clip in a composition or sound editor first", GuiLogLevel.Warning);
-            return;
-        }
-
-        if (importedAudioList.SelectedItem is not ImportedAudio audio)
-        {
-            SetStatus("Select an imported clip first", GuiLogLevel.Warning);
-            return;
-        }
-
-        var (_, clip) = document.FindClip(clipId);
-        if (ActiveStandaloneMedia is not null)
-        {
-            if (clip.MediaId is not { } standaloneMediaId)
-            {
-                SetStatus("Select the original sound block before replacing it", GuiLogLevel.Warning);
-                return;
-            }
-
-            AssignStandaloneReplacement(standaloneMediaId, audio);
-            return;
-        }
-
-        if (clip.ReplacementMediaId is { } importedId && scopeImports.ContainsKey(importedId))
-        {
-            AssignStructuralImport(importedId, audio);
-            return;
-        }
-
-        if (clip.MediaId is not { } mediaId)
-        {
-            SetStatus("The selected block is not an original Wwise media reference", GuiLogLevel.Warning);
-            return;
-        }
-
-        AssignImportedReplacement(mediaId, audio);
     }
 
     private void CaptureImportedAudioDragStart(object? sender, PointerPressedEventArgs e)

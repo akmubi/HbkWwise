@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
+using HbkWwise.Core;
 
 namespace HbkWwise.Gui;
 

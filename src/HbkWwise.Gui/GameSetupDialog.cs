@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Platform.Storage;
+using HbkWwise.Core;
 
 namespace HbkWwise.Gui;
 
@@ -60,7 +61,7 @@ public sealed class GameSetupDialog : Window
 
         var explanation = new SelectableTextBlock
         {
-            Text = "This is normally a one-time setup. HBK Wwise will verify the base and DLC PAKs with the AES key, then build its internal game index automatically.",
+            Text = "This is normally a one-time setup. HBK Wwise will verify the game PAKs with the AES key, then build its internal game index automatically.",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap,
             Foreground = Avalonia.Media.Brushes.LightGray,
             Margin = new Thickness(0, 8, 0, 12)
@@ -175,9 +176,7 @@ public sealed class GameSetupDialog : Window
         }
 
         validation.Foreground = Avalonia.Media.Brushes.LightGray;
-        validation.Text = paks.Length == 2
-            ? "Base and DLC PAKs found."
-            : "Base PAK found; the DLC/update PAK is not installed.";
+        validation.Text = $"Found {paks.Length} supported game PAK{(paks.Length == 1 ? string.Empty : "s")}.";
 
         Close(new GameSetupRequest(directory, aesKey.Text.Trim()));
     }

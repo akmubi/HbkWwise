@@ -5,8 +5,7 @@ namespace HbkWwise.Gui;
 
 public sealed class GuiSettings
 {
-    public string PakDirectory { get; set; } =
-        @"C:\Program Files (x86)\Steam\steamapps\common\Hi-Fi RUSH\Hibiki\Content\Paks";
+    public string PakDirectory { get; set; } = string.Empty;
 
     public string? RepakPath { get; set; }
     public string? WwiserPath { get; set; }
@@ -112,9 +111,10 @@ public static class GuiSettingsDiscovery
             ? Math.Clamp(settings.MasterVolume, 0, 1)
             : 1;
 
-        settings.PakDirectory = ExistingDirectory(Environment.GetEnvironmentVariable("HBKWWISE_PAK_DIR"))
-            ?? ExistingDirectory(settings.PakDirectory)
-            ?? new GuiSettings().PakDirectory;
+        settings.PakDirectory = ExistingGameDirectory(Environment.GetEnvironmentVariable("HBKWWISE_PAK_DIR"))
+            ?? ExistingGameDirectory(settings.PakDirectory)
+            ?? GameDataConfiguration.FindInstalledPakDirectory()
+            ?? string.Empty;
         settings.RepakPath = ExistingFile(Environment.GetEnvironmentVariable("HBKWWISE_REPAK"))
             ?? ExistingFile(settings.RepakPath)
             ?? Try(() => RepakArchive.FindTool(null, "HBKWWISE_REPAK", "repak.exe"));
@@ -141,6 +141,14 @@ public static class GuiSettingsDiscovery
         !string.IsNullOrWhiteSpace(path) && Directory.Exists(path)
             ? System.IO.Path.GetFullPath(path)
             : null;
+
+    private static string? ExistingGameDirectory(string? path)
+    {
+        var directory = ExistingDirectory(path);
+        return directory is null
+            ? null
+            : GameDataConfiguration.FindInstalledPakDirectory([directory]);
+    }
 
     private static string? Try(Func<string> find)
     {

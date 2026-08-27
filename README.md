@@ -18,6 +18,8 @@ You need:
 - [Wwise](https://www.audiokinetic.com/en/) **`2019.2.15.7667.2164`**.
 - [Python 3 (>=3.8)](https://www.python.org/downloads/release/python-3820/).
 
+Steam, Epic Games Store, and Xbox app installations are detected automatically in their common locations. You can select the game PAK directory manually if it is installed elsewhere.
+
 ## Installation
 
 1. Download the latest `HbkWwise-<version>-Setup.exe` release.

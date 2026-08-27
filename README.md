@@ -31,8 +31,6 @@ You need:
 
 ## Installation
 
-### installation
-
 1. Download the latest `HbkWwise-<version>-Setup.exe` release.
 2. Run the installer.
 3. Start **HBK Wwise**.

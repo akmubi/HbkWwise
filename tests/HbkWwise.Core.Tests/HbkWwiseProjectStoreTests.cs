@@ -80,7 +80,15 @@ public sealed class HbkWwiseProjectStoreTests
             ],
             null,
             ["media:Music_ST01:50"],
-            [20]);
+            [20],
+            [new HbkProjectGeneratedAudio(
+                @"C:\Project_audio\Generated\guitar.wav",
+                @"C:\guitar.flac",
+                125,
+                50,
+                2000,
+                FadeInMs: 100,
+                FadeOutMs: 200)]);
 
         try
         {
@@ -106,6 +114,7 @@ public sealed class HbkWwiseProjectStoreTests
             Assert.Equal("Music_ST01", loaded.Timelines[0].StandaloneMediaBank);
             Assert.Equal([128], loaded.Timelines[0].Markers[0].PositionOffsets!);
             Assert.Equal(["media:Music_ST01:50"], loaded.PinnedClipKeys!);
+            Assert.Equal(project.GeneratedAudio![0], Assert.Single(loaded.GeneratedAudio!));
             Assert.Contains("\"composition\"", await File.ReadAllTextAsync(path));
         }
         finally

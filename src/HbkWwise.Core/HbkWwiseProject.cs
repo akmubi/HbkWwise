@@ -21,7 +21,8 @@ public sealed record HbkWwiseProject(
     HbkProjectTimeline[]? Timelines = null,
     Guid? ActiveTimelineId = null,
     string[]? PinnedClipKeys = null,
-    uint[]? MetronomeSegments = null)
+    uint[]? MetronomeSegments = null,
+    HbkProjectGeneratedAudio[]? GeneratedAudio = null)
 {
     public const int CurrentVersion = 1;
 }
@@ -82,6 +83,16 @@ public sealed record HbkProjectImport(
     uint NewMediaId,
     string Path,
     double PhysicalDurationMs);
+
+public sealed record HbkProjectGeneratedAudio(
+    string Path,
+    string SourcePath,
+    double LeadingSilenceMs,
+    double SourceOffsetMs,
+    double DurationMs,
+    bool RepeatsSource = false,
+    double FadeInMs = 0,
+    double FadeOutMs = 0);
 
 public sealed record HbkProjectSegmentTempo(uint SegmentId, double Bpm);
 
@@ -164,6 +175,25 @@ public static class HbkWwiseProjectStore
         if (project.ImportedAudio is null || project.Replacements is null || project.Imports is null)
         {
             throw new InvalidDataException("Project collections are missing.");
+        }
+
+        if (project.GeneratedAudio?.Any(item =>
+                string.IsNullOrWhiteSpace(item.Path)
+                || string.IsNullOrWhiteSpace(item.SourcePath)
+                || !double.IsFinite(item.LeadingSilenceMs)
+                || item.LeadingSilenceMs < 0
+                || !double.IsFinite(item.SourceOffsetMs)
+                || item.SourceOffsetMs < 0
+                || !double.IsFinite(item.DurationMs)
+                || item.DurationMs <= 0
+                || !double.IsFinite(item.FadeInMs)
+                || item.FadeInMs < 0
+                || item.FadeInMs > item.DurationMs
+                || !double.IsFinite(item.FadeOutMs)
+                || item.FadeOutMs < 0
+                || item.FadeOutMs > item.DurationMs) == true)
+        {
+            throw new InvalidDataException("Generated project audio data is invalid.");
         }
 
         ValidateTimelineData(

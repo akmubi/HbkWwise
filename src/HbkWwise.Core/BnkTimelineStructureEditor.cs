@@ -16,7 +16,8 @@ public sealed record BnkTrackPlaylistItemEdit(
     double SourceDurationMs,
     bool PreserveAutomation = true,
     BnkClipFadeEdit? Fades = null,
-    uint? TemplateMediaId = null);
+    uint? TemplateMediaId = null,
+    BnkTimelineClipAnchor? OriginalAnchor = null);
 
 public sealed record BnkClipFadeEdit(double FadeInMs, double FadeOutMs);
 

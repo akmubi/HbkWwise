@@ -95,6 +95,9 @@ public sealed class RealPakIntegrationTests
         var structuredXml = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.xml");
         var segmentRetimedBnk = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.bnk");
         var segmentRetimedXml = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.xml");
+        var commonBnk = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.bnk");
+        var commonXml = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.xml");
+        var sameBankModPak = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.pak");
 
         try
         {
@@ -432,6 +435,97 @@ public sealed class RealPakIntegrationTests
             Assert.True(waveform.DurationMs > 1_000);
             Assert.Contains(waveform.Maximums, value => value > 0.01f);
 
+            await RepakArchive.ExtractBankAsync(index.Paks!, "Music_Common", commonBnk, aesKey: key);
+            await WwiserClient.DumpXmlAsync(
+                commonBnk,
+                commonXml,
+                Environment.GetEnvironmentVariable("HBKWWISE_WWISER") ?? WwiserPath,
+                Environment.GetEnvironmentVariable("HBKWWISE_PYTHON"));
+            var commonScopes = BnkRetimer.FindTimingScopes(
+                    commonXml,
+                    "Mu_Session_00_M90_HIDEOUT_01_Play")
+                .Where(scope => scope.Bpms.Length == 1)
+                .Select(scope => (
+                    Scope: scope,
+                    Timeline: BnkTimelineValidator.Validate(
+                        commonXml,
+                        scope.ObjectId,
+                        new Dictionary<uint, double>(),
+                        scope.Bpms[0],
+                        scope.Bpms[0],
+                        eventNameOrId: "Mu_Session_00_M90_HIDEOUT_01_Play")))
+                .Where(item => item.Timeline.Clips.Any(clip => clip.SourceIdOffset is not null))
+                .ToArray();
+            Assert.True(commonScopes.Length >= 2);
+
+            var structuralScope = commonScopes.MinBy(item => item.Timeline.Clips
+                .Where(clip => clip.SourceIdOffset is not null)
+                .Min(clip => clip.SourceIdOffset!.Value));
+
+            var fieldScope = commonScopes
+                .Where(item => item.Scope.ObjectId != structuralScope.Scope.ObjectId)
+                .MaxBy(item => item.Timeline.Clips
+                    .Where(clip => clip.SourceIdOffset is not null)
+                    .Max(clip => clip.SourceIdOffset!.Value));
+
+            var structuralTrack = structuralScope.Timeline.Clips
+                .Where(clip => clip.SourceIdOffset is not null)
+                .GroupBy(clip => clip.TrackObjectId)
+                .MinBy(group => group.Min(clip => clip.SourceIdOffset!.Value))!;
+
+            var structuralTemplate = structuralTrack.OrderBy(clip => clip.PlaylistIndex).First();
+            var inserted = PlaylistEdit(structuralTemplate) with
+            {
+                PreserveAutomation = false
+            };
+
+            var fieldClip = fieldScope.Timeline.Clips
+                .Where(clip => clip.SourceIdOffset is not null)
+                .MaxBy(clip => clip.SourceIdOffset!.Value)!;
+            var sameBank = await ProjectModPakBuilder.BuildAsync(
+                index,
+                [
+                    new ScopedModPakRequest(
+                        "Mu_Session_00_M90_HIDEOUT_01_Play",
+                        structuralScope.Scope.ObjectId,
+                        structuralScope.Scope.Bpms[0],
+                        structuralScope.Scope.Bpms[0],
+                        [],
+                        PlaylistEdits:
+                        [
+                            new BnkTrackPlaylistEdit(
+                                structuralTemplate.TrackObjectId,
+                                structuralTrack.OrderBy(clip => clip.PlaylistIndex)
+                                    .Select(clip => PlaylistEdit(clip))
+                                    .Append(inserted)
+                                    .ToArray())
+                        ]),
+                    new ScopedModPakRequest(
+                        "Mu_Session_00_M90_HIDEOUT_01_Play",
+                        fieldScope.Scope.ObjectId,
+                        fieldScope.Scope.Bpms[0],
+                        fieldScope.Scope.Bpms[0],
+                        [],
+                        TimelineEdits:
+                        [
+                            new BnkTimelineClipEdit(
+                                fieldClip.SourceIdOffset!.Value,
+                                Math.Max(0, fieldClip.TimelineStartMs) + 1,
+                                Math.Max(0, fieldClip.BeginTrimMs),
+                                Math.Max(1, fieldClip.TimelineEndMs - Math.Max(0, fieldClip.TimelineStartMs)),
+                                ClipAnchor(fieldClip))
+                        ])
+                ],
+                new Dictionary<uint, string>(),
+                sameBankModPak,
+                aesKey: key,
+                wwiserPath: Environment.GetEnvironmentVariable("HBKWWISE_WWISER") ?? WwiserPath,
+                pythonPath: Environment.GetEnvironmentVariable("HBKWWISE_PYTHON"),
+                vgmstreamPath: Environment.GetEnvironmentVariable("HBKWWISE_VGMSTREAM") ?? VgmstreamPath,
+                wwiseConsolePath: Environment.GetEnvironmentVariable("HBKWWISE_WWISE_CONSOLE") ?? WwiseConsolePath);
+
+            Assert.Equal(2, sameBank.Compositions.Length);
+
             const uint scopedMediaId = 1_073_741_801;
             const uint insertedMediaId = 1_073_741_802;
             const uint segmentScopedMediaId = 1_073_741_803;
@@ -575,6 +669,9 @@ public sealed class RealPakIntegrationTests
             File.Delete(structuredXml);
             File.Delete(segmentRetimedBnk);
             File.Delete(segmentRetimedXml);
+            File.Delete(commonBnk);
+            File.Delete(commonXml);
+            File.Delete(sameBankModPak);
         }
     }
 
@@ -586,7 +683,14 @@ public sealed class RealPakIntegrationTests
         Math.Max(0, clip.TimelineStartMs) * ratio,
         Math.Max(0, clip.BeginTrimMs) * ratio,
         Math.Max(1, clip.TimelineEndMs - Math.Max(0, clip.TimelineStartMs)) * ratio,
-        clip.SourceDurationMs);
+        clip.SourceDurationMs,
+        OriginalAnchor: ClipAnchor(clip));
+
+    private static BnkTimelineClipAnchor ClipAnchor(BnkTimelineClip clip) => new(
+        clip.TrackObjectId,
+        clip.SegmentObjectId,
+        clip.PlaylistIndex,
+        clip.MediaId);
 }
 
 public sealed class RealPakFactAttribute : FactAttribute

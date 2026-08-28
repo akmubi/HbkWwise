@@ -127,6 +127,8 @@ public sealed partial class MainWindow : Window
     private readonly DispatcherTimer transportTimer = new() { Interval = TimeSpan.FromMilliseconds(33) };
     private readonly Dictionary<uint, ScopeReplacement> scopeReplacements = [];
     private readonly Dictionary<uint, StructuralImport> scopeImports = [];
+    private readonly Dictionary<string, HbkProjectGeneratedAudio> generatedAudio =
+        new(StringComparer.OrdinalIgnoreCase);
 
     private CancellationTokenSource? indexOperation;
     private CancellationTokenSource? browserRefresh;
@@ -1332,6 +1334,7 @@ public sealed partial class MainWindow : Window
             ClearTimeline();
             ResetTimelineTabs();
             importedAudio.Clear();
+            generatedAudio.Clear();
             pinnedClipKeys.Clear();
             RefreshClipCatalog();
             ClearBrowserSelection();
@@ -1419,9 +1422,18 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var project = CaptureProject();
-            await HbkWwiseProjectStore.SaveAsync(project, path);
-            currentProjectPath = Path.GetFullPath(path);
+            var output = Path.GetFullPath(path);
+            var captured = CaptureProject();
+            var previousPath = currentProjectPath;
+            var relocation = await Task.Run(() => HbkWwiseProjectAssets.LocalizeWithMap(
+                captured,
+                output,
+                previousPath));
+            var project = relocation.Project;
+            await HbkWwiseProjectStore.SaveAsync(project, output);
+            currentProjectPath = output;
+            RebindProjectAudioPaths(relocation.PathMap);
+            RestoreGeneratedAudio(project.GeneratedAudio);
             SetProjectClean();
             RememberProject(currentProjectPath);
             UpdateWindowTitle();
@@ -1516,6 +1528,12 @@ public sealed partial class MainWindow : Window
             using var operation = new CancellationTokenSource();
             indexOperation = operation;
             SetBusy(true, $"Restoring {Path.GetFileName(path)}");
+            var repaired = await HbkWwiseProjectAudio.RepairAsync(
+                project,
+                path,
+                settings.VgmstreamPath,
+                operation.Token);
+            project = repaired.Project;
             LoadedEventTimeline? composition = null;
             if (project.Composition is { } identity)
             {
@@ -1534,6 +1552,7 @@ public sealed partial class MainWindow : Window
 
             var normalized = NormalizeProjectMediaIds(project);
             project = normalized.Project;
+            RestoreGeneratedAudio(project.GeneratedAudio);
             if (project.Timelines is { Length: > 0 } savedTimelines)
             {
                 var restoredTimelines = new List<(HbkProjectTimeline Project, LoadedEventTimeline? Runtime)>();
@@ -1562,8 +1581,9 @@ public sealed partial class MainWindow : Window
             ClearBrowserSelection();
             currentProjectPath = Path.GetFullPath(path);
             SetProjectClean();
-            if (normalized.ChangedIds > 0)
+            if (normalized.ChangedIds > 0 || repaired.NeedsSave)
             {
+                cleanProjectFingerprint = null;
                 MarkProjectDirty();
             }
 
@@ -1574,6 +1594,12 @@ public sealed partial class MainWindow : Window
                 + (normalized.ChangedIds == 0
                     ? string.Empty
                     : $"; upgraded {normalized.ChangedIds} legacy media ID{(normalized.ChangedIds == 1 ? string.Empty : "s")}")
+                + (repaired.RebuiltFiles == 0
+                    ? string.Empty
+                    : $"; rebuilt {repaired.RebuiltFiles} project audio file{(repaired.RebuiltFiles == 1 ? string.Empty : "s")}")
+                + (repaired.DeduplicatedMedia == 0
+                    ? string.Empty
+                    : $"; removed {repaired.DeduplicatedMedia} duplicate WEM assignment{(repaired.DeduplicatedMedia == 1 ? string.Empty : "s")}")
                 + (missing == 0 ? string.Empty : $"; {missing} audio-library file{(missing == 1 ? string.Empty : "s")} missing"),
                 missing == 0 ? GuiLogLevel.Info : GuiLogLevel.Warning);
         }
@@ -1606,16 +1632,19 @@ public sealed partial class MainWindow : Window
             StringComparer.OrdinalIgnoreCase))
         {
             var items = group.ToArray();
-            var legacySources = items.Where(audio =>
-                string.IsNullOrWhiteSpace(audio.WorkingPath)
-                && RequiresWorkingWav(audio.Path)).ToArray();
-            var legacyWorking = items.Where(audio =>
+            var internalWorking = items.Where(audio =>
                 string.IsNullOrWhiteSpace(audio.WorkingPath)
                 && IsInternalWorkingPath(audio.Path)).ToArray();
-            if (legacySources.Length == 1 && legacyWorking.Length > 0)
+
+            var visible = items.Except(internalWorking).ToArray();
+            var legacySources = visible.Where(audio =>
+                string.IsNullOrWhiteSpace(audio.WorkingPath)
+                && RequiresWorkingWav(audio.Path)).ToArray();
+
+            if (legacySources.Length == 1 && visible.Length == 1 && internalWorking.Length > 0)
             {
                 var source = legacySources[0];
-                var workingPath = legacyWorking
+                var workingPath = internalWorking
                     .OrderByDescending(audio => string.Equals(
                         Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(audio.Path))),
                         "Generated",
@@ -1628,17 +1657,10 @@ public sealed partial class MainWindow : Window
                     source.Path,
                     source.Format,
                     workingPath));
-
-                var hiddenIds = legacyWorking.Select(audio => audio.Id).ToHashSet();
-                foreach (var audio in items.Where(audio =>
-                    audio.Id != source.Id && !hiddenIds.Contains(audio.Id)))
-                {
-                    RestoreImportedAudio(audio);
-                }
             }
             else
             {
-                foreach (var audio in items)
+                foreach (var audio in visible)
                 {
                     RestoreImportedAudio(audio);
                 }
@@ -1689,6 +1711,92 @@ public sealed partial class MainWindow : Window
         && value.All(character => character is >= '0' and <= '9'
             or >= 'a' and <= 'f'
             or >= 'A' and <= 'F');
+
+    private void RestoreGeneratedAudio(IEnumerable<HbkProjectGeneratedAudio>? saved)
+    {
+        generatedAudio.Clear();
+        foreach (var item in saved ?? [])
+        {
+            generatedAudio[Path.GetFullPath(item.Path)] = item;
+        }
+    }
+
+    private void RebindProjectAudioPaths(IReadOnlyDictionary<string, string> paths)
+    {
+        if (paths.Count == 0)
+        {
+            return;
+        }
+
+        restoringProject = true;
+        try
+        {
+            for (var index = 0; index < importedAudio.Count; index++)
+            {
+                var audio = importedAudio[index];
+                importedAudio[index] = audio with
+                {
+                    Path = ReboundPath(audio.Path, paths)!,
+                    WorkingPath = ReboundPath(audio.WorkingPath, paths)
+                };
+            }
+
+            foreach (var tab in timelineTabItems)
+            {
+                tab.UpdateSnapshot(RebindSnapshot(tab.Snapshot, paths));
+            }
+
+            if (activeTimelineTab is not null)
+            {
+                RestoreTimelineSnapshot(activeTimelineTab.Snapshot);
+            }
+        }
+        finally
+        {
+            restoringProject = false;
+        }
+
+        RefreshClipCatalog();
+    }
+
+    private static TimelineSnapshot RebindSnapshot(
+        TimelineSnapshot snapshot,
+        IReadOnlyDictionary<string, string> paths) => snapshot with
+        {
+            Tracks = snapshot.Tracks.Select(track => track with
+            {
+                Clips = track.Clips.Select(clip => clip with
+                {
+                    SourcePath = ReboundPath(clip.SourcePath, paths)
+                }).ToArray()
+            }).ToArray(),
+            Replacements = snapshot.Replacements.ToDictionary(
+                item => item.Key,
+                item => item.Value with { Path = ReboundPath(item.Value.Path, paths)! }),
+            Imports = snapshot.Imports.ToDictionary(
+                item => item.Key,
+                item => item.Value with { Path = ReboundPath(item.Value.Path, paths)! })
+        };
+
+    private static string? ReboundPath(
+        string? path,
+        IReadOnlyDictionary<string, string> paths)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
+        return paths.TryGetValue(Path.GetFullPath(path), out var rebound) ? rebound : path;
+    }
+
+    private static bool PathsEqual(string? left, string? right) =>
+        !string.IsNullOrWhiteSpace(left)
+        && !string.IsNullOrWhiteSpace(right)
+        && string.Equals(
+            Path.GetFullPath(left),
+            Path.GetFullPath(right),
+            StringComparison.OrdinalIgnoreCase);
 
     private async Task<LoadedEventTimeline> ResolveSavedCompositionAsync(
         HbkProjectComposition identity,
@@ -1872,8 +1980,21 @@ public sealed partial class MainWindow : Window
             timelineProjects,
             activeTimelineTab?.Id,
             pinnedClipKeys.ToArray(),
-            active.MetronomeSegments.ToArray());
+            active.MetronomeSegments.ToArray(),
+            generatedAudio.Values
+                .Where(item => ProjectUsesAudioPath(item.Path, tracks, timelineProjects))
+                .ToArray());
     }
+
+    private static bool ProjectUsesAudioPath(
+        string path,
+        IEnumerable<HbkProjectTrack> rootTracks,
+        IEnumerable<HbkProjectTimeline> timelines) => rootTracks
+            .Concat(timelines.SelectMany(timeline => timeline.Tracks))
+            .SelectMany(track => track.Clips)
+            .Any(clip => PathsEqual(clip.SourcePath, path))
+        || timelines.SelectMany(timeline => timeline.Imports)
+            .Any(item => PathsEqual(item.Path, path));
 
     private static HbkProjectTrack[] CaptureProjectTracks(
         IEnumerable<MusicTimelineTrack> sourceTracks,
@@ -4818,7 +4939,7 @@ public sealed partial class MainWindow : Window
         using var operation = new CancellationTokenSource();
         indexOperation = operation;
         var workingDirectory = Path.Combine(Path.GetTempPath(), "HbkWwise", $"project-{Guid.NewGuid():N}");
-        SetBusy(true, $"Building every project edit into {Path.GetFileName(outputPath)}");
+        SetBusy(true, $"Building {Path.GetFileName(outputPath)}...");
         try
         {
             Directory.CreateDirectory(workingDirectory);
@@ -4970,6 +5091,8 @@ public sealed partial class MainWindow : Window
             || placements.Any(placement => originals.First(item =>
                     item.SourceIdOffset == placement.Clip.SourceIdOffset).TrackObjectId
                 != placement.Track.ObjectId)
+            || placements.Any(placement => placement.Clip.ReplacementMediaId is { } replacementId
+                && imports.ContainsKey(replacementId))
             || placements.Any(placement => FadeChanged(
                 originals.First(item => item.SourceIdOffset == placement.Clip.SourceIdOffset),
                 placement.Clip));
@@ -5011,7 +5134,12 @@ public sealed partial class MainWindow : Window
                             : null,
                         TemplateMediaId: directImport
                             ? imports[clip.ReplacementMediaId!.Value].TemplateMediaId
-                            : null);
+                            : null,
+                        OriginalAnchor: new BnkTimelineClipAnchor(
+                            original.TrackObjectId,
+                            original.SegmentObjectId,
+                            original.PlaylistIndex,
+                            original.MediaId));
                 }).ToArray())).ToArray();
             return new ScopedTimelineExportEdits(null, playlistEdits);
         }
@@ -5043,7 +5171,12 @@ public sealed partial class MainWindow : Window
                     sourceOffset,
                     clip.StartMs,
                     clip.SourceOffsetMs,
-                    clip.DurationMs));
+                    clip.DurationMs,
+                    new BnkTimelineClipAnchor(
+                        original.TrackObjectId,
+                        original.SegmentObjectId,
+                        original.PlaylistIndex,
+                        original.MediaId)));
             }
         }
 
@@ -5071,7 +5204,10 @@ public sealed partial class MainWindow : Window
                     / SegmentBpm(segmentBpms, composition, original.SegmentId);
                 return Near(marker.PositionMs, expected)
                     ? null
-                    : new BnkTimelineMarkerEdit(offset, marker.PositionMs);
+                    : new BnkTimelineMarkerEdit(
+                        offset,
+                        marker.PositionMs,
+                        new BnkTimelineMarkerAnchor(original.SegmentId, original.Marker.Id));
             }))
             .OfType<BnkTimelineMarkerEdit>()
             .ToArray();
@@ -5095,7 +5231,10 @@ public sealed partial class MainWindow : Window
                     / SegmentBpm(segmentBpms, composition, segment.ObjectId);
                 return Near(current, expected)
                     ? null
-                    : new BnkTimelineSegmentDurationEdit(segment.DurationOffset!.Value, current);
+                    : new BnkTimelineSegmentDurationEdit(
+                        segment.DurationOffset!.Value,
+                        current,
+                        segment.ObjectId);
             })
             .OfType<BnkTimelineSegmentDurationEdit>()
             .ToArray();
@@ -5564,7 +5703,9 @@ public sealed partial class MainWindow : Window
             return clipId;
         }
 
-        var newMediaId = AllocateReplacementMediaId(template.MediaId, audio.UsablePath);
+        var reusedMediaId = ReusableImportedMediaId(audio);
+        var newMediaId = reusedMediaId
+            ?? AllocateReplacementMediaId(template.MediaId, audio.UsablePath);
         scopeImports[newMediaId] = new StructuralImport(
             template.MediaId,
             newMediaId,
@@ -5584,9 +5725,18 @@ public sealed partial class MainWindow : Window
             segmentObjectId: targetSegmentId,
             trackLengthMs: targetTrack.LengthMs);
         ScheduleWaveforms();
-        SetStatus($"Added exportable media {newMediaId} to {targetTrack.Name} in segment {targetSegmentId}");
+        SetStatus(reusedMediaId is null
+            ? $"Added exportable media {newMediaId} to {targetTrack.Name} in segment {targetSegmentId}"
+            : $"Added another reference to media {newMediaId} on {targetTrack.Name}; no duplicate WEM will be built");
         return addedClipId;
     }
+
+    private uint? ReusableImportedMediaId(ImportedAudio audio) => scopeImports.Values
+        .Concat(timelineTabItems.SelectMany(tab => tab.Snapshot.Imports.Values))
+        .Where(item => PathsEqual(item.Path, audio.UsablePath)
+            && Near(item.PhysicalDurationMs, audio.DurationMs))
+        .Select(item => (uint?)item.NewMediaId)
+        .FirstOrDefault();
 
     private void CopySelectedClip()
     {
@@ -5620,7 +5770,7 @@ public sealed partial class MainWindow : Window
             ImportedAudio audio;
             if (copied.Clip.SourcePath is { } sourcePath && File.Exists(sourcePath))
             {
-                audio = await ImportAudioAsync(sourcePath, copied.Clip.Name);
+                audio = await PrepareCopiedAudioAsync(sourcePath, copied.Clip.Name);
             }
             else
             {
@@ -5634,7 +5784,7 @@ public sealed partial class MainWindow : Window
                 try
                 {
                     var wav = await PrepareClipWavAsync(copied.Clip, aesKey, operation.Token);
-                    audio = await ImportAudioAsync(wav, copied.Clip.Name);
+                    audio = await PrepareCopiedAudioAsync(wav, copied.Clip.Name, operation.Token);
                 }
                 finally
                 {
@@ -5668,6 +5818,32 @@ public sealed partial class MainWindow : Window
         {
             SetFailure("Clip paste failed", exception);
         }
+    }
+
+    private async Task<ImportedAudio> PrepareCopiedAudioAsync(
+        string path,
+        string name,
+        CancellationToken cancellationToken = default)
+    {
+        var source = Path.GetFullPath(path);
+        var existing = importedAudio.FirstOrDefault(item =>
+            item.Path.Equals(source, StringComparison.OrdinalIgnoreCase)
+            || item.UsablePath.Equals(source, StringComparison.OrdinalIgnoreCase));
+
+        if (existing is not null)
+        {
+            return existing;
+        }
+
+        var working = await PrepareExternalWavAsync(source, cancellationToken, projectAudio: true);
+        var format = await VgmstreamClient.InspectAsync(working, settings.VgmstreamPath, cancellationToken);
+
+        return new ImportedAudio(
+            Guid.NewGuid(),
+            name,
+            source,
+            format,
+            working.Equals(source, StringComparison.OrdinalIgnoreCase) ? null : working);
     }
 
     private void AssignStructuralImport(uint newMediaId, ImportedAudio audio)
@@ -5947,6 +6123,15 @@ public sealed partial class MainWindow : Window
                         envelope.DurationMs,
                         result.LeadingGapMs,
                         operation.Token);
+                    var recipe = new HbkProjectGeneratedAudio(
+                        aligned,
+                        RecipeSourcePath(clip, source),
+                        result.LeadingGapMs,
+                        clip.SourceOffsetMs,
+                        clip.DurationMs,
+                        clip.RepeatsSource,
+                        clip.FadeInMs,
+                        clip.FadeOutMs);
                     var duration = envelope.DurationMs + result.LeadingGapMs;
                     var newMediaId = AllocateReplacementMediaId(templateMediaId, aligned);
                     var previousImportId = clip.ReplacementMediaId is { } replacementId
@@ -5958,6 +6143,7 @@ public sealed partial class MainWindow : Window
                         newMediaId,
                         aligned,
                         duration);
+                    generatedAudio[aligned] = recipe;
                     try
                     {
                         ApplySegmentBpm(id, result.Bpm);
@@ -5966,6 +6152,7 @@ public sealed partial class MainWindow : Window
                     catch
                     {
                         scopeImports.Remove(newMediaId);
+                        generatedAudio.Remove(aligned);
                         throw;
                     }
 
@@ -6022,6 +6209,16 @@ public sealed partial class MainWindow : Window
             output,
             cancellationToken), cancellationToken);
         return output;
+    }
+
+    private string RecipeSourcePath(MusicTimelineClip clip, string preparedSource)
+    {
+        var imported = importedAudio.FirstOrDefault(audio =>
+            PathsEqual(audio.Path, clip.SourcePath)
+            || PathsEqual(audio.WorkingPath, clip.SourcePath)
+            || PathsEqual(audio.Path, preparedSource)
+            || PathsEqual(audio.WorkingPath, preparedSource));
+        return imported?.Path ?? preparedSource;
     }
 
     private async Task CalculateCatalogBpmAsync(ClipCatalogItem item)
@@ -6640,6 +6837,17 @@ public sealed partial class MainWindow : Window
         CancellationToken cancellationToken,
         bool projectAudio = false)
     {
+        return await PrepareExternalWavInDirectoryAsync(
+            sourcePath,
+            projectAudio ? ProjectAudioDirectory("Converted") : PreviewDirectory(),
+            cancellationToken);
+    }
+
+    private async Task<string> PrepareExternalWavInDirectoryAsync(
+        string sourcePath,
+        string directory,
+        CancellationToken cancellationToken)
+    {
         var source = Path.GetFullPath(sourcePath);
         if (Path.GetExtension(source).Equals(".wav", StringComparison.OrdinalIgnoreCase))
         {
@@ -6649,10 +6857,10 @@ public sealed partial class MainWindow : Window
         var stamp = File.GetLastWriteTimeUtc(source).Ticks;
         var id = WwiseHash.Fnv1($"{source}|{stamp}");
         var name = SafeFileName(Path.GetFileNameWithoutExtension(source));
+        Directory.CreateDirectory(directory);
         var output = Path.Combine(
-            projectAudio ? ProjectAudioDirectory("Converted") : PreviewDirectory(),
+            directory,
             $"{(string.IsNullOrWhiteSpace(name) ? "audio" : name)}-{id}.wav");
-
         if (!File.Exists(output))
         {
             await VgmstreamClient.DecodeAsync(source, output, settings.VgmstreamPath, cancellationToken);

@@ -164,6 +164,7 @@ public static class ScopedModPakBuilder
                 pythonPath,
                 namesPath,
                 cancellationToken);
+
             var sourceBytes = await File.ReadAllBytesAsync(sourceBank, cancellationToken);
             var authored = BnkTimelineValidator.Validate(
                 sourceXml,
@@ -172,10 +173,19 @@ public static class ScopedModPakBuilder
                 request.FromBpm,
                 request.FromBpm,
                 eventNameOrId: selectedEvent.Id.ToString());
+
+            var rebased = BnkTimelineEditRebaser.Rebase(
+                authored,
+                request.TimelineEdits,
+                request.PlaylistEdits,
+                request.MarkerEdits,
+                request.SegmentDurationEdits);
+
             var authoredScopeIds = BnkRetimer.FindTimingScopes(sourceXml, selectedEvent.Id.ToString())
                 .Single(item => item.ObjectId == request.ScopeObjectId)
                 .ObjectIds
                 .ToHashSet();
+
             var expectedAtNewBpm = segmentTempos.Length == 0
                 ? BnkTimelineValidator.Validate(
                     sourceXml,
@@ -185,6 +195,7 @@ public static class ScopedModPakBuilder
                     request.NewBpm,
                     eventNameOrId: selectedEvent.Id.ToString())
                 : null;
+
             var retimePlans = segmentTempos.Length == 0
                 ? [BnkRetimer.Plan(
                     sourceBytes,
@@ -201,10 +212,11 @@ public static class ScopedModPakBuilder
                     item.NewBpm,
                     item.FromBpm,
                     eventNameOrId: selectedEvent.Id.ToString())).ToArray();
+
             var timed = retimePlans.Aggregate(sourceBytes, BnkRetimer.Apply);
             var retimePatchCount = retimePlans.Sum(plan => plan.Patches.Length);
-            var timelineEdits = request.TimelineEdits is { Length: > 0 }
-                ? request.TimelineEdits
+            var timelineEdits = rebased.TimelineEdits is { Length: > 0 }
+                ? rebased.TimelineEdits
                 : DefaultEdits(
                     authored,
                     request.FromBpm / request.NewBpm,
@@ -214,12 +226,12 @@ public static class ScopedModPakBuilder
             byte[] editedData;
             int timelinePatchCount;
             var workingXml = sourceXml;
-            if (request.PlaylistEdits is { Length: > 0 })
+            if (rebased.PlaylistEdits is { Length: > 0 })
             {
                 var fields = BnkTimelineEditor.Apply(timed, authored, timelineEdits, durationsByOldId);
                 var markers = BnkTimelineMarkerEditor.Apply(
-                    fields.Data, request.MarkerEdits, request.SegmentDurationEdits);
-                var structural = BnkTimelineStructureEditor.Apply(markers.Data, sourceXml, request.PlaylistEdits);
+                    fields.Data, rebased.MarkerEdits, rebased.SegmentDurationEdits);
+                var structural = BnkTimelineStructureEditor.Apply(markers.Data, sourceXml, rebased.PlaylistEdits);
 
                 editedData = structural.Data;
                 timelinePatchCount = fields.PatchCount + structural.EditedTracks + structural.AddedClips
@@ -239,7 +251,7 @@ public static class ScopedModPakBuilder
             {
                 var edited = BnkTimelineEditor.Apply(timed, authored, timelineEdits, durationsByOldId);
                 var markers = BnkTimelineMarkerEditor.Apply(
-                    edited.Data, request.MarkerEdits, request.SegmentDurationEdits);
+                    edited.Data, rebased.MarkerEdits, rebased.SegmentDurationEdits);
 
                 editedData = markers.Data;
                 timelinePatchCount = edited.PatchCount + markers.PatchCount;
@@ -426,7 +438,12 @@ public static class ScopedModPakBuilder
             clip.SourceIdOffset!.Value,
             Math.Max(0, clip.TimelineStartMs) * ratio,
             Math.Max(0, clip.BeginTrimMs) * ratio,
-            Math.Max(1, (clip.TimelineEndMs - Math.Max(0, clip.TimelineStartMs)) * ratio)))
+            Math.Max(1, (clip.TimelineEndMs - Math.Max(0, clip.TimelineStartMs)) * ratio),
+            new BnkTimelineClipAnchor(
+                clip.TrackObjectId,
+                clip.SegmentObjectId,
+                clip.PlaylistIndex,
+                clip.MediaId)))
         .ToArray();
 
     private static BnkTimelineValidation ClassifyExpectedMeterIssues(

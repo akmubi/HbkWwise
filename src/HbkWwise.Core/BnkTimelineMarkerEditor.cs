@@ -2,9 +2,17 @@ using System.Buffers.Binary;
 
 namespace HbkWwise.Core;
 
-public sealed record BnkTimelineMarkerEdit(int PositionOffset, double PositionMs);
+public sealed record BnkTimelineMarkerAnchor(uint SegmentObjectId, uint MarkerId);
 
-public sealed record BnkTimelineSegmentDurationEdit(int DurationOffset, double DurationMs);
+public sealed record BnkTimelineMarkerEdit(
+    int PositionOffset,
+    double PositionMs,
+    BnkTimelineMarkerAnchor? Anchor = null);
+
+public sealed record BnkTimelineSegmentDurationEdit(
+    int DurationOffset,
+    double DurationMs,
+    uint? SegmentObjectId = null);
 
 public sealed record BnkTimelineMarkerEditResult(byte[] Data, int PatchCount);
 

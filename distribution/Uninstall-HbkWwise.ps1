@@ -45,13 +45,13 @@ Get-ChildItem -LiteralPath $target -Directory -Recurse -ErrorAction SilentlyCont
         }
     }
 if (Test-Path -LiteralPath $target) {
-    $remainingFiles = @(Get-ChildItem -LiteralPath $target -Force)
-    if ($remainingFiles.Count -eq 0) {
-        Remove-Item -LiteralPath $target -Force
+    $root = [System.IO.Path]::GetPathRoot($target)
+    if ([string]::Equals($target.TrimEnd('\'), $root.TrimEnd('\'),
+            [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Unsafe install path: $target"
     }
-    else {
-        Write-Warning "Unrecognized files remain in $target; the directory was preserved."
-    }
+    Set-Location -LiteralPath ([System.IO.Path]::GetTempPath())
+    Remove-Item -LiteralPath $target -Recurse -Force
 }
 
 $userData = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'HbkWwise'))

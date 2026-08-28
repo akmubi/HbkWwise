@@ -6,7 +6,14 @@ public sealed record BnkTimelineClipEdit(
     int SourceIdOffset,
     double StartMs,
     double SourceOffsetMs,
-    double DurationMs);
+    double DurationMs,
+    BnkTimelineClipAnchor? Anchor = null);
+
+public sealed record BnkTimelineClipAnchor(
+    uint TrackObjectId,
+    uint? SegmentObjectId,
+    int PlaylistIndex,
+    uint MediaId);
 
 public sealed record BnkTimelineEditResult(
     byte[] Data,

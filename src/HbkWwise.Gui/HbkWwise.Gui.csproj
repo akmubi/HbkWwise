@@ -13,6 +13,8 @@
     <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.20" />
     <ProjectReference Include="..\HbkWwise.Core\HbkWwise.Core.csproj" />
     <Content Include="..\..\tools\win-x64\repak.exe" Link="tools\win-x64\repak.exe" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\tools\win-x64\wwiser.pyz" Link="tools\win-x64\wwiser.pyz" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\tools\win-x64\vgmstream\**\*" Link="tools\win-x64\vgmstream\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\tools\win-x64\licenses\**\*" Link="tools\win-x64\licenses\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\docs\images\**\*" Link="docs\images\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\..\LICENSE.txt" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />

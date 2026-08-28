@@ -54,4 +54,4 @@ New-Item -Path 'HKCU:\Software\HBK Wwise' -Force | Out-Null
 Set-ItemProperty -Path 'HKCU:\Software\HBK Wwise' -Name InstallLocation -Value $target
 
 Write-Host "HBK Wwise installed in $target"
-Write-Host 'Open Edit -> Preferences on first launch to confirm Wwise, wwiser, Python, vgmstream, and the game paths.'
+Write-Host 'Open Edit -> Preferences on first launch to confirm Wwise, Python, and the game paths.'

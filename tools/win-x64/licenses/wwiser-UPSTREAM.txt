@@ -1,0 +1,11 @@
+wwiser
+https://github.com/bnnm/wwiser
+
+Bundled release:
+v20260808
+https://github.com/bnnm/wwiser/releases/tag/v20260808
+
+The upstream repository and release do not include an explicit license file.
+
+Local wwiser.pyz SHA-256:
+f4ba1368895adab285f27fa37b142e5da805bcc6fb77e8daba282dac65d89411

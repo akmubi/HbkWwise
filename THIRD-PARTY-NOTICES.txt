@@ -23,6 +23,11 @@ Included components
 * repak, pinned at commit 355b5f62f51959c7cc6dd5a51708646ef483065d
   - MIT OR Apache-2.0. Both upstream license texts and the binary SHA-256 are
   in `tools/win-x64/licenses`.
+* wwiser v20260808. Upstream information and the bundled binary SHA-256 are
+  in `tools/win-x64/licenses`.
+* vgmstream r2117 and its command-line runtime libraries. The vgmstream
+  copyright and permission notice, upstream information, and bundled binary
+  SHA-256 are in `tools/win-x64/licenses`.
 
 Deliberately not included
 -------------------------
@@ -35,13 +40,7 @@ Official public packages do not contain any of the following:
   never part of the release archive.
 * Wwise or `WwiseConsole.exe`. Wwise 2019.2.15.7667 must be installed by the
   user under Audiokinetic's terms.
-* wwiser. Its upstream repository does not currently contain an explicit
-  redistribution license; users provide their own copy.
 * Python. Users install a supported Python 3 distribution separately.
-* vgmstream binaries. The vgmstream project itself has a permissive ISC-style
-  license, but prebuilt Windows archives can contain additional codec
-  components. Users provide their preferred build so the HBK Wwise package
-  does not silently assume redistribution rights for that complete archive.
 * Hi-Fi RUSH game files, generated indexes, extracted BNKs/WEMs, projects,
   mods, AES keys, or any other user/game content.
 

@@ -169,11 +169,23 @@ foreach ($libraryProperty in $assets.libraries.PSObject.Properties) {
 $packageMetadata | Sort-Object | Set-Content -LiteralPath (Join-Path $nugetLicenseRoot 'PACKAGE-LICENSES.txt') -Encoding UTF8
 
 $forbiddenFiles = @(Get-ChildItem -LiteralPath $stage -File -Recurse | Where-Object {
-    $_.Name -match '(?i)^(oo2core.*\.dll|WwiseConsole\.exe|wwiser\.(pyz|py)|vgmstream.*\.exe)$' -or
+    $_.Name -match '(?i)^(oo2core.*\.dll|WwiseConsole\.exe)$' -or
     $_.Extension -match '(?i)^\.(pak|bnk|wem)$'
 })
 if ($forbiddenFiles.Count -gt 0) {
     throw "Forbidden redistributable content entered the release: $($forbiddenFiles.FullName -join '; ')"
+}
+
+$requiredTools = @(
+    'tools/win-x64/repak.exe',
+    'tools/win-x64/wwiser.pyz',
+    'tools/win-x64/vgmstream/vgmstream-cli.exe'
+)
+foreach ($relativePath in $requiredTools) {
+    $tool = Join-Path $stage $relativePath
+    if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+        throw "A required bundled tool is missing from the release: $relativePath"
+    }
 }
 
 $textExtensions = @('.txt', '.md', '.json', '.config', '.ps1', '.deps.json', '.runtimeconfig.json')

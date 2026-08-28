@@ -67,8 +67,17 @@ public static class VgmstreamClient
         var local = roots.Where(root => root is not null)
             .Select(root => Path.Combine(root!, "vgmstream-win", "vgmstream-cli.exe"))
             .FirstOrDefault(File.Exists);
+        var bundled = Path.Combine(
+            AppContext.BaseDirectory,
+            "tools",
+            "win-x64",
+            "vgmstream",
+            "vgmstream-cli.exe");
 
-        return RepakArchive.FindTool(configuredPath ?? local, "HBKWWISE_VGMSTREAM", "vgmstream-cli.exe");
+        return RepakArchive.FindTool(
+            configuredPath ?? local ?? bundled,
+            "HBKWWISE_VGMSTREAM",
+            "vgmstream-cli.exe");
     }
 
     private static string ExistingFile(string path)

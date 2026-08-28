@@ -9,6 +9,4 @@ public static class GuiPaths
     public static string IndexPath => Path.Combine(Root, "index.json");
 
     public static string IndexCacheDirectory => Path.Combine(Root, "index-cache");
-
-    public static string ToolsDirectory => Path.Combine(Root, "tools");
 }

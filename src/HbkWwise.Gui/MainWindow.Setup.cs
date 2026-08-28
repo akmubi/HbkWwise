@@ -7,7 +7,7 @@ public sealed partial class MainWindow
     private async Task<bool> EnsureApplicationSetupAsync()
     {
         var candidate = settings.Copy();
-        if (!await EnsureManagedToolsAsync(candidate))
+        if (!EnsureRequiredTools(candidate))
         {
             return false;
         }
@@ -18,44 +18,29 @@ public sealed partial class MainWindow
         return await EnsureGameIndexAsync();
     }
 
-    private async Task<bool> EnsureManagedToolsAsync(GuiSettings candidate)
+    private bool EnsureRequiredTools(GuiSettings candidate)
     {
-        indexOperation?.Cancel();
-        using var operation = new CancellationTokenSource();
-        indexOperation = operation;
-
         SetBusy(true, "Checking required tools");
         try
         {
-            var managed = await ManagedToolInstaller.EnsureAsync(
-                candidate,
-                message => SetStatus(message),
-                operation.Token);
-
-            candidate.WwiserPath = managed.WwiserPath;
-            candidate.VgmstreamPath = managed.VgmstreamPath;
+            candidate.RepakPath = RepakArchive.FindTool(
+                candidate.RepakPath,
+                "HBKWWISE_REPAK",
+                "repak.exe");
+            candidate.WwiserPath = WwiserClient.FindWwiser(candidate.WwiserPath);
+            candidate.VgmstreamPath = VgmstreamClient.FindTool(candidate.VgmstreamPath);
             candidate.PythonPath = WwiserClient.FindPython(candidate.PythonPath);
             return true;
         }
-        catch (OperationCanceledException)
-        {
-            SetStatus("Tool setup cancelled");
-            return false;
-        }
         catch (Exception exception) when (
-            exception is HttpRequestException or IOException
-                or UnauthorizedAccessException or InvalidDataException)
+            exception is IOException or UnauthorizedAccessException)
         {
-            SetFailure("Tool setup failed", exception);
+            SetFailure("Required tool check failed", exception);
             return false;
         }
         finally
         {
-            if (ReferenceEquals(indexOperation, operation))
-            {
-                indexOperation = null;
-                SetBusy(false);
-            }
+            SetBusy(false);
         }
     }
 
@@ -218,7 +203,7 @@ public sealed partial class MainWindow
             return;
         }
 
-        if (!await EnsureManagedToolsAsync(updated))
+        if (!EnsureRequiredTools(updated))
         {
             return;
         }

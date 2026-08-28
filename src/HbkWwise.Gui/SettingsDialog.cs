@@ -34,8 +34,8 @@ public sealed class SettingsDialog : Window
         aesKey = Field(current.AesKey);
 
         aesKey.Watermark = "Required for encrypted game PAKs";
-        wwiser.Watermark = "Leave empty to use the managed download";
-        vgmstream.Watermark = "Leave empty to use the managed download";
+        wwiser.Watermark = "Leave empty to use the bundled copy";
+        vgmstream.Watermark = "Leave empty to use the bundled copy";
 
         Title = "Preferences";
         Width = 860;

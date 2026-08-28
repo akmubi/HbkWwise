@@ -1563,7 +1563,7 @@ public sealed class TimelineControl : Panel
         var detail = nonAudio
             ? $"MIDI / CONTROL {clip.MediaId} | no independent audio"
             : clip.MediaId is null
-            ? Path.GetExtension(clip.SourcePath)
+            ? "IMPORTED AUDIO"
             : replaced
                 ? $"WEM {clip.MediaId} / {clip.ReplacementMediaId?.ToString() ?? "NEW"}"
                 : $"WEM {clip.MediaId}";

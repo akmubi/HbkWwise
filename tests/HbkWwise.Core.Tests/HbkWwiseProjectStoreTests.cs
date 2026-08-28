@@ -47,7 +47,12 @@ public sealed class HbkWwiseProjectStoreTests
                     0.5)
             ],
             [new MusicTimelineMarker(1, "Entry", 1000, 20)],
-            [new HbkProjectAudio(Guid.NewGuid(), "Guitar", @"C:\guitar.wav", format)],
+            [new HbkProjectAudio(
+                Guid.NewGuid(),
+                "Guitar",
+                @"C:\guitar.flac",
+                format,
+                @"C:\Project_audio\Converted\guitar.wav")],
             [new HbkProjectReplacement(50, 60, @"C:\guitar.wav", 3000)],
             [new HbkProjectImport(50, 70, @"C:\other.wav", 4000)],
             [new HbkProjectSegmentTempo(20, 164)],

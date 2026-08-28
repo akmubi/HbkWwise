@@ -766,7 +766,7 @@ public sealed partial class MainWindow : Window
 
         var items = importedAudio
             .Where(audio => Matches(query, audio.Name, audio.Path))
-            .Select(audio => ClipCatalogItem.FromImported(audio))
+            .Select(ClipCatalogItem.FromImported)
             .Concat((index?.Media ?? [])
                 .Where(media => media.IsPlayableAudio)
                 .Where(media => Matches(query, media.SourceName, media.Id.ToString(), media.Bank, media.Path))
@@ -815,6 +815,7 @@ public sealed partial class MainWindow : Window
             var source = Path.GetFullPath(clip.SourcePath);
             var imported = importedAudio.FirstOrDefault(
                 item => Path.GetFullPath(item.Path).Equals(source, StringComparison.OrdinalIgnoreCase)
+                    || Path.GetFullPath(item.UsablePath).Equals(source, StringComparison.OrdinalIgnoreCase)
             );
 
             if (imported is not null)
@@ -1597,6 +1598,98 @@ public sealed partial class MainWindow : Window
         && left.ScopeId == right.ScopeId
         && left.SegmentId == right.SegmentId;
 
+    private void RestoreImportedAudio(IReadOnlyCollection<HbkProjectAudio> savedAudio)
+    {
+        importedAudio.Clear();
+        foreach (var group in savedAudio.GroupBy(
+            audio => audio.Name,
+            StringComparer.OrdinalIgnoreCase))
+        {
+            var items = group.ToArray();
+            var legacySources = items.Where(audio =>
+                string.IsNullOrWhiteSpace(audio.WorkingPath)
+                && RequiresWorkingWav(audio.Path)).ToArray();
+            var legacyWorking = items.Where(audio =>
+                string.IsNullOrWhiteSpace(audio.WorkingPath)
+                && IsInternalWorkingPath(audio.Path)).ToArray();
+            if (legacySources.Length == 1 && legacyWorking.Length > 0)
+            {
+                var source = legacySources[0];
+                var workingPath = legacyWorking
+                    .OrderByDescending(audio => string.Equals(
+                        Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(audio.Path))),
+                        "Generated",
+                        StringComparison.OrdinalIgnoreCase))
+                    .Select(audio => audio.Path)
+                    .First();
+                importedAudio.Add(new ImportedAudio(
+                    source.Id,
+                    source.Name,
+                    source.Path,
+                    source.Format,
+                    workingPath));
+
+                var hiddenIds = legacyWorking.Select(audio => audio.Id).ToHashSet();
+                foreach (var audio in items.Where(audio =>
+                    audio.Id != source.Id && !hiddenIds.Contains(audio.Id)))
+                {
+                    RestoreImportedAudio(audio);
+                }
+            }
+            else
+            {
+                foreach (var audio in items)
+                {
+                    RestoreImportedAudio(audio);
+                }
+            }
+        }
+    }
+
+    private void RestoreImportedAudio(HbkProjectAudio audio) => importedAudio.Add(new ImportedAudio(
+        audio.Id,
+        audio.Name,
+        audio.Path,
+        audio.Format,
+        audio.WorkingPath));
+
+    private static bool RequiresWorkingWav(string path)
+    {
+        var extension = Path.GetExtension(path);
+        return extension.Equals(".flac", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".mp3", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".ogg", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsInternalWorkingPath(string path)
+    {
+        if (!Path.GetExtension(path).Equals(".wav", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var folder = Path.GetFileName(Path.GetDirectoryName(Path.GetFullPath(path)));
+        var name = Path.GetFileNameWithoutExtension(path);
+        if (string.Equals(folder, "Converted", StringComparison.OrdinalIgnoreCase))
+        {
+            var suffix = name[(name.LastIndexOf('-') + 1)..];
+            return uint.TryParse(suffix, out _);
+        }
+
+        if (!string.Equals(folder, "Generated", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var parts = name.Split('-');
+        return parts.Length >= 3 && IsHexId(parts[^1]) && IsHexId(parts[^2]);
+    }
+
+    private static bool IsHexId(string value) => value.Length == 32
+        && value.All(character => character is >= '0' and <= '9'
+            or >= 'a' and <= 'f'
+            or >= 'A' and <= 'F');
+
     private async Task<LoadedEventTimeline> ResolveSavedCompositionAsync(
         HbkProjectComposition identity,
         CancellationToken cancellationToken)
@@ -1625,11 +1718,7 @@ public sealed partial class MainWindow : Window
         switchingTimelineTab = true;
         try
         {
-            importedAudio.Clear();
-            foreach (var audio in project.ImportedAudio)
-            {
-                importedAudio.Add(new ImportedAudio(audio.Id, audio.Name, audio.Path, audio.Format));
-            }
+            RestoreImportedAudio(project.ImportedAudio);
 
             pinnedClipKeys.Clear();
             foreach (var key in project.PinnedClipKeys ?? [])
@@ -1761,7 +1850,12 @@ public sealed partial class MainWindow : Window
             active.TimelineLengthMs,
             tracks,
             active.Markers,
-            importedAudio.Select(item => new HbkProjectAudio(item.Id, item.Name, item.Path, item.Format)).ToArray(),
+            importedAudio.Select(item => new HbkProjectAudio(
+                item.Id,
+                item.Name,
+                item.Path,
+                item.Format,
+                item.WorkingPath)).ToArray(),
             active.Replacements.Select(item => new HbkProjectReplacement(
                 item.Key,
                 item.Value.NewMediaId,
@@ -1940,11 +2034,7 @@ public sealed partial class MainWindow : Window
                 project.SnapEnabled,
                 restoredBpms);
             snapEnabled.IsChecked = project.SnapEnabled;
-            importedAudio.Clear();
-            foreach (var audio in project.ImportedAudio)
-            {
-                importedAudio.Add(new ImportedAudio(audio.Id, audio.Name, audio.Path, audio.Format));
-            }
+            RestoreImportedAudio(project.ImportedAudio);
 
             pinnedClipKeys.Clear();
             foreach (var key in project.PinnedClipKeys ?? [])
@@ -4548,6 +4638,11 @@ public sealed partial class MainWindow : Window
                 ? $"{FormatMs(fit.RepeatedMs)} (authored loop)"
                 : $"{FormatMs(fit.RepeatedMs)} (replacement must repeat)"
             : "none";
+        var replacementPath = clip.SourcePath is { } internalPath
+            ? importedAudio.FirstOrDefault(audio => audio.UsablePath.Equals(
+                internalPath,
+                StringComparison.OrdinalIgnoreCase))?.Path ?? internalPath
+            : "none";
         ShowInspector($"TIMELINE CLIP\n\nName: {clip.Name}\n"
             + $"Start: {FormatMs(clip.StartMs)}\nDuration: {FormatMs(clip.DurationMs)}\n"
             + $"Source offset: {FormatMs(clip.SourceOffsetMs)}\n"
@@ -4566,7 +4661,7 @@ public sealed partial class MainWindow : Window
             + $"Storage: {(indexedMedia is null ? "unknown" : TimelineStorage(indexedMedia))}\n"
             + $"New media: {clip.ReplacementMediaId?.ToString(CultureInfo.InvariantCulture) ?? "not assigned"}\n"
             + $"Occurrences in composition: {occurrences}\n"
-            + $"Replacement: {clip.SourcePath ?? "none"}");
+            + $"Replacement: {replacementPath}");
     }
 
     private void MakeFadeFromSelection(MusicTimelineFadeKind kind)
@@ -5128,19 +5223,27 @@ public sealed partial class MainWindow : Window
     private async Task<ImportedAudio> ImportAudioAsync(string path, string? displayName = null)
     {
         var fullPath = Path.GetFullPath(path);
-        var existing = importedAudio.FirstOrDefault(item => item.Path.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
+        var sourceName = displayName ?? Path.GetFileNameWithoutExtension(fullPath);
+        var existing = importedAudio.FirstOrDefault(item =>
+            item.Path.Equals(fullPath, StringComparison.OrdinalIgnoreCase)
+            || item.UsablePath.Equals(fullPath, StringComparison.OrdinalIgnoreCase));
         if (existing is not null)
         {
             importedAudioList.SelectedItem = existing;
             return existing;
         }
 
-        var format = await VgmstreamClient.InspectAsync(fullPath, settings.VgmstreamPath);
+        var workingPath = RequiresWorkingWav(fullPath)
+            ? await PrepareExternalWavAsync(fullPath, CancellationToken.None, projectAudio: true)
+            : fullPath;
+
+        var format = await VgmstreamClient.InspectAsync(workingPath, settings.VgmstreamPath);
         var item = new ImportedAudio(
             Guid.NewGuid(),
-            displayName ?? Path.GetFileNameWithoutExtension(fullPath),
+            sourceName,
             fullPath,
-            format);
+            format,
+            workingPath.Equals(fullPath, StringComparison.OrdinalIgnoreCase) ? null : workingPath);
         importedAudio.Add(item);
         importedAudioList.SelectedItem = item;
         RefreshClipCatalog();
@@ -5427,7 +5530,7 @@ public sealed partial class MainWindow : Window
         var targetSegmentId = targetTrack.SegmentObjectId;
         if (loadedTimeline is null || targetSegmentId is null)
         {
-            var clipId = timeline.AddExternalClip(audio.Name, audio.Path, audio.DurationMs, position);
+            var clipId = timeline.AddExternalClip(audio.Name, audio.UsablePath, audio.DurationMs, position);
             ScheduleWaveforms();
             if (ActiveStandaloneMedia is not null)
             {
@@ -5455,21 +5558,21 @@ public sealed partial class MainWindow : Window
             ?? loadedTimeline.Validation.Clips.FirstOrDefault(item => item.TrackObjectId == objectId);
         if (template?.SourceIdOffset is not { } sourceIdOffset || template.FieldOffsets is null)
         {
-            var clipId = timeline.AddExternalClip(audio.Name, audio.Path, audio.DurationMs, position);
+            var clipId = timeline.AddExternalClip(audio.Name, audio.UsablePath, audio.DurationMs, position);
             ScheduleWaveforms();
             SetStatus($"Track {targetTrack.Name} has no authored audio source to use as a Wwise storage template", GuiLogLevel.Warning);
             return clipId;
         }
 
-        var newMediaId = AllocateReplacementMediaId(template.MediaId, audio.Path);
+        var newMediaId = AllocateReplacementMediaId(template.MediaId, audio.UsablePath);
         scopeImports[newMediaId] = new StructuralImport(
             template.MediaId,
             newMediaId,
-            audio.Path,
+            audio.UsablePath,
             audio.DurationMs);
         var addedClipId = timeline.AddExternalClip(
             audio.Name,
-            audio.Path,
+            audio.UsablePath,
             audio.DurationMs,
             position,
             template.MediaId,
@@ -5576,10 +5679,10 @@ public sealed partial class MainWindow : Window
 
         scopeImports[newMediaId] = existing with
         {
-            Path = audio.Path,
+            Path = audio.UsablePath,
             PhysicalDurationMs = audio.DurationMs
         };
-        var count = document.ReplaceImportedMedia(newMediaId, audio.Path, audio.DurationMs);
+        var count = document.ReplaceImportedMedia(newMediaId, audio.UsablePath, audio.DurationMs);
         ScheduleWaveforms();
         SetStatus($"Updated imported media {newMediaId} in {count} playlist placement{(count == 1 ? string.Empty : "s")}");
     }
@@ -5588,13 +5691,13 @@ public sealed partial class MainWindow : Window
     {
         var replacement = new ScopeReplacement(
             scopeReplacements.GetValueOrDefault(mediaId)?.NewMediaId
-                ?? AllocateReplacementMediaId(mediaId, audio.Path),
-            audio.Path,
+                ?? AllocateReplacementMediaId(mediaId, audio.UsablePath),
+            audio.UsablePath,
             audio.DurationMs);
         scopeReplacements[mediaId] = replacement;
         var count = document.ReplaceMediaReferences(
             mediaId,
-            audio.Path,
+            audio.UsablePath,
             replacement.NewMediaId,
             audio.DurationMs);
         ScheduleWaveforms();
@@ -5604,7 +5707,7 @@ public sealed partial class MainWindow : Window
 
     private void AssignStandaloneReplacement(uint mediaId, ImportedAudio audio)
     {
-        var count = document.ReplaceMediaReferences(mediaId, audio.Path, mediaId, audio.DurationMs);
+        var count = document.ReplaceMediaReferences(mediaId, audio.UsablePath, mediaId, audio.DurationMs);
         ScheduleWaveforms();
         ShowTimelineSelection();
         SetStatus($"Replaced {count} sound block{(count == 1 ? string.Empty : "s")} with {audio.Name}; the edited lane will be rendered into media {mediaId}");
@@ -5621,7 +5724,7 @@ public sealed partial class MainWindow : Window
         using var operation = BeginPreviewOperation($"Preparing {item.Name}");
         try
         {
-            var wav = await PrepareExternalWavAsync(item.Path, operation.Token, projectAudio: true);
+            var wav = await PrepareExternalWavAsync(item.UsablePath, operation.Token, projectAudio: true);
             previewPlayer.Play(wav);
             StartTransport(followTimeline: false);
             SetStatus($"Playing imported clip: {item.Name}");
@@ -5825,6 +5928,7 @@ public sealed partial class MainWindow : Window
                 rendered,
                 envelope,
                 initialBpm,
+                settings.MasterVolume,
                 segmentId is not null).ShowDialog<BpmDetectionResult?>(this);
             if (detected is { } result && segmentId is { } id)
             {
@@ -5937,7 +6041,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var wav = item.Imported is { } imported
-                ? await PrepareExternalWavAsync(imported.Path, operation.Token, projectAudio: true)
+                ? await PrepareExternalWavAsync(imported.UsablePath, operation.Token, projectAudio: true)
                 : item.Media is { } media
                     ? await PrepareMediaWavAsync(media.Id, aesKey, operation.Token)
                     : throw new InvalidOperationException("The selected catalog item has no audio source.");
@@ -5945,7 +6049,13 @@ public sealed partial class MainWindow : Window
             EndPreviewOperation(operation);
 
             var initialBpm = document.SegmentBpm(timeline.AuditionSegmentId);
-            await new BpmDetectionDialog(item.Name, wav, envelope, initialBpm, canApply: false)
+            await new BpmDetectionDialog(
+                    item.Name,
+                    wav,
+                    envelope,
+                    initialBpm,
+                    settings.MasterVolume,
+                    canApply: false)
                 .ShowDialog<BpmDetectionResult?>(this);
             SetStatus($"BPM calculation closed for {item.Name}");
         }
@@ -7107,9 +7217,17 @@ public sealed partial class MainWindow : Window
         BnkTimelineClipEdit[]? FieldEdits,
         BnkTrackPlaylistEdit[]? PlaylistEdits);
 
-    private sealed record ImportedAudio(Guid Id, string Name, string Path, MediaFormat Format)
+    private sealed record ImportedAudio(
+        Guid Id,
+        string Name,
+        string Path,
+        MediaFormat Format,
+        string? WorkingPath = null)
     {
         public double DurationMs => Format.DurationSeconds * 1000;
+        public string UsablePath => !string.IsNullOrWhiteSpace(WorkingPath) && File.Exists(WorkingPath)
+            ? WorkingPath
+            : Path;
     }
 
     private sealed record ClipCatalogItem(

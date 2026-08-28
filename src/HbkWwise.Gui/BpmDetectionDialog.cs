@@ -21,9 +21,14 @@ internal sealed class BpmDetectionDialog : Window
     private readonly BpmPreviewPlayer player;
     private readonly BpmWaveformControl waveform;
     private readonly TextBox bpmInput;
-    private readonly TextBlock tapCount = new();
+    private readonly TextBlock tapCount = new()
+    {
+        VerticalAlignment = VerticalAlignment.Center
+    };
     private readonly SelectableTextBlock alignmentText = new() { Foreground = Brushes.LightGray, TextWrapping = TextWrapping.Wrap };
     private readonly CheckBox metronome = new() { Content = "Metronome" };
+    private readonly Slider volume = new() { Minimum = 0, Maximum = 1, Width = 100 };
+    private readonly TextBlock volumeValue = new() { Foreground = Brushes.Gray, VerticalAlignment = VerticalAlignment.Center };
     private readonly Slider zoom = new() { Minimum = 1, Maximum = 500, Width = 150 };
     private readonly List<TapSample> taps = [];
     private readonly DispatcherTimer timer = new() { Interval = TimeSpan.FromMilliseconds(33) };
@@ -36,19 +41,27 @@ internal sealed class BpmDetectionDialog : Window
         string wavPath,
         WaveformEnvelope envelope,
         double initialBpm,
+        double initialVolume,
         bool canApply)
     {
         this.canApply = canApply;
         bpm = Math.Clamp(initialBpm, 20, 400);
         player = new BpmPreviewPlayer(wavPath, envelope.DurationMs);
         player.Bpm = bpm;
+        player.Gain = Math.Clamp(initialVolume, 0, 1);
         waveform = new BpmWaveformControl(audioName, envelope) { Bpm = bpm };
         bpmInput = new TextBox
         {
             Text = bpm.ToString("0.###", CultureInfo.InvariantCulture),
-            Width = 86,
-            HorizontalContentAlignment = HorizontalAlignment.Right
+            Width = 76,
+            Height = 28,
+            MinHeight = 0,
+            Padding = new Thickness(6, 1),
+            HorizontalContentAlignment = HorizontalAlignment.Right,
+            VerticalContentAlignment = VerticalAlignment.Center
         };
+        volume.Value = player.Gain;
+        volumeValue.Text = $"{player.Gain * 100:0}%";
 
         Title = $"Calculate BPM - {audioName}";
         Width = 1_050;
@@ -72,6 +85,14 @@ internal sealed class BpmDetectionDialog : Window
             }
         };
         metronome.IsCheckedChanged += (_, _) => player.MetronomeEnabled = metronome.IsChecked == true;
+        volume.PropertyChanged += (_, args) =>
+        {
+            if (args.Property == Slider.ValueProperty)
+            {
+                player.Gain = volume.Value;
+                volumeValue.Text = $"{player.Gain * 100:0}%";
+            }
+        };
         zoom.Value = waveform.PixelsPerSecond;
         zoom.PropertyChanged += (_, args) =>
         {
@@ -124,6 +145,15 @@ internal sealed class BpmDetectionDialog : Window
         controls.Children.Add(tapCount);
         controls.Children.Add(resetTaps);
         controls.Children.Add(metronome);
+        controls.Children.Add(new TextBlock
+        {
+            Text = "Volume",
+            Foreground = Brushes.Gray,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(10, 0, 0, 0)
+        });
+        controls.Children.Add(volume);
+        controls.Children.Add(volumeValue);
         controls.Children.Add(new TextBlock
         {
             Text = "Zoom",
@@ -758,6 +788,8 @@ internal sealed class BpmPreviewPlayer : IDisposable
     private double bpm = 120;
     private bool metronomeEnabled;
     private double audioOffsetMs;
+    private double gain = 1;
+    private VolumeSampleProvider? volume;
 
     public BpmPreviewPlayer(string wavPath, double durationMs)
     {
@@ -801,6 +833,19 @@ internal sealed class BpmPreviewPlayer : IDisposable
     {
         get => metronomeEnabled;
         set => metronomeEnabled = value;
+    }
+
+    public double Gain
+    {
+        get => gain;
+        set
+        {
+            gain = Math.Clamp(value, 0, 1);
+            if (volume is not null)
+            {
+                volume.Volume = (float)gain;
+            }
+        }
     }
 
     public double AudioOffsetMs
@@ -884,7 +929,8 @@ internal sealed class BpmPreviewPlayer : IDisposable
 
         output = new WaveOutEvent { DesiredLatency = 80, NumberOfBuffers = 3 };
         output.PlaybackStopped += OutputStopped;
-        var provider = mixer.Take(TimeSpan.FromMilliseconds(DurationMs - stoppedPositionMs)).ToWaveProvider();
+        volume = new VolumeSampleProvider(mixer) { Volume = (float)Gain };
+        var provider = volume.Take(TimeSpan.FromMilliseconds(DurationMs - stoppedPositionMs)).ToWaveProvider();
         outputBytesPerSecond = provider.WaveFormat.AverageBytesPerSecond;
         output.Init(provider);
         State = play ? AudioPreviewState.Playing : AudioPreviewState.Paused;
@@ -932,6 +978,7 @@ internal sealed class BpmPreviewPlayer : IDisposable
         {
             output = null;
             reader = null;
+            volume = null;
             outputBytesPerSecond = 0;
             suppressStopped = false;
         }

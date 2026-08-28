@@ -64,7 +64,12 @@ public sealed record HbkProjectClipAnchor(
     int PlaylistIndex,
     uint MediaId);
 
-public sealed record HbkProjectAudio(Guid Id, string Name, string Path, MediaFormat Format);
+public sealed record HbkProjectAudio(
+    Guid Id,
+    string Name,
+    string Path,
+    MediaFormat Format,
+    string? WorkingPath = null);
 
 public sealed record HbkProjectReplacement(
     uint OriginalMediaId,

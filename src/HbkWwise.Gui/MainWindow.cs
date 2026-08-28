@@ -5621,7 +5621,7 @@ public sealed partial class MainWindow : Window
         using var operation = BeginPreviewOperation($"Preparing {item.Name}");
         try
         {
-            var wav = await PrepareExternalWavAsync(item.Path, operation.Token);
+            var wav = await PrepareExternalWavAsync(item.Path, operation.Token, projectAudio: true);
             previewPlayer.Play(wav);
             StartTransport(followTimeline: false);
             SetStatus($"Playing imported clip: {item.Name}");
@@ -5901,18 +5901,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static async Task<string> RenderAlignedAudioAsync(
+    private async Task<string> RenderAlignedAudioAsync(
         MusicTimelineClip clip,
         string renderedSource,
         double sourceDurationMs,
         double leadingSilenceMs,
         CancellationToken cancellationToken)
     {
-        var directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "HbkWwise",
-            "generated-audio");
-        Directory.CreateDirectory(directory);
+        var directory = ProjectAudioDirectory("Generated");
         var name = SafeFileName(clip.Name);
         var output = Path.Combine(
             directory,
@@ -5941,7 +5937,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var wav = item.Imported is { } imported
-                ? await PrepareExternalWavAsync(imported.Path, operation.Token)
+                ? await PrepareExternalWavAsync(imported.Path, operation.Token, projectAudio: true)
                 : item.Media is { } media
                     ? await PrepareMediaWavAsync(media.Id, aesKey, operation.Token)
                     : throw new InvalidOperationException("The selected catalog item has no audio source.");
@@ -6468,7 +6464,7 @@ public sealed partial class MainWindow : Window
     {
         if (clip.SourcePath is { } sourcePath)
         {
-            return await PrepareExternalWavAsync(sourcePath, cancellationToken);
+            return await PrepareExternalWavAsync(sourcePath, cancellationToken, projectAudio: true);
         }
 
         if (clip.MediaId is not { } mediaId || index is null)
@@ -6529,7 +6525,10 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task<string> PrepareExternalWavAsync(string sourcePath, CancellationToken cancellationToken)
+    private async Task<string> PrepareExternalWavAsync(
+        string sourcePath,
+        CancellationToken cancellationToken,
+        bool projectAudio = false)
     {
         var source = Path.GetFullPath(sourcePath);
         if (Path.GetExtension(source).Equals(".wav", StringComparison.OrdinalIgnoreCase))
@@ -6539,13 +6538,33 @@ public sealed partial class MainWindow : Window
 
         var stamp = File.GetLastWriteTimeUtc(source).Ticks;
         var id = WwiseHash.Fnv1($"{source}|{stamp}");
-        var output = Path.Combine(PreviewDirectory(), $"source-{id}.wav");
+        var name = SafeFileName(Path.GetFileNameWithoutExtension(source));
+        var output = Path.Combine(
+            projectAudio ? ProjectAudioDirectory("Converted") : PreviewDirectory(),
+            $"{(string.IsNullOrWhiteSpace(name) ? "audio" : name)}-{id}.wav");
+
         if (!File.Exists(output))
         {
             await VgmstreamClient.DecodeAsync(source, output, settings.VgmstreamPath, cancellationToken);
         }
 
         return output;
+    }
+
+    private string ProjectAudioDirectory(string category)
+    {
+        var root = currentProjectPath is { Length: > 0 } projectPath
+            ? Path.Combine(
+                Path.GetDirectoryName(projectPath)!,
+                $"{Path.GetFileNameWithoutExtension(projectPath)}_audio")
+            : Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "HbkWwise",
+                "unsaved-project-audio");
+
+        var directory = Path.Combine(root, category);
+        Directory.CreateDirectory(directory);
+        return directory;
     }
 
     private static string PreviewDirectory()

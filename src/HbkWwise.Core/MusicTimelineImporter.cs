@@ -16,6 +16,11 @@ public sealed record MusicScopeTimelineImportResult(
     int Markers,
     int Media);
 
+public sealed record MusicTimelineScopeSource(
+    BnkTimelineValidation Validation,
+    double Bpm,
+    double TimeRatio = 1);
+
 public static class MusicTimelineImporter
 {
     private const uint EntryMarkerId = 43573010;
@@ -100,24 +105,53 @@ public static class MusicTimelineImporter
         IReadOnlyDictionary<uint, string>? mediaNames = null,
         bool snapEnabled = true,
         double timeRatio = 1,
+        uint? selectedSegmentId = null) => LoadScopes(
+            document,
+            [new MusicTimelineScopeSource(validation, bpm, timeRatio)],
+            mediaNames,
+            snapEnabled,
+            selectedSegmentId);
+
+    public static MusicScopeTimelineImportResult LoadScopes(
+        MusicTimelineDocument document,
+        IReadOnlyCollection<MusicTimelineScopeSource> sources,
+        IReadOnlyDictionary<uint, string>? mediaNames = null,
+        bool snapEnabled = true,
         uint? selectedSegmentId = null)
     {
         ArgumentNullException.ThrowIfNull(document);
-        ArgumentNullException.ThrowIfNull(validation);
-        if (!double.IsFinite(timeRatio) || timeRatio <= 0)
+        ArgumentNullException.ThrowIfNull(sources);
+        if (sources.Count == 0)
         {
-            throw new ArgumentOutOfRangeException(nameof(timeRatio));
+            throw new ArgumentException("At least one timeline scope is required.", nameof(sources));
         }
 
-        var segments = validation.Segments
-            .OrderByDescending(segment => segment.ObjectId == selectedSegmentId)
-            .ThenBy(segment => SegmentLabel(segment, validation.Clips, mediaNames), StringComparer.OrdinalIgnoreCase)
-            .ThenBy(segment => segment.ObjectId)
-            .ToArray();
-        var tracks = segments.SelectMany(segment =>
+        if (sources.Any(source => !double.IsFinite(source.Bpm)
+                || source.Bpm <= 0
+                || !double.IsFinite(source.TimeRatio)
+                || source.TimeRatio <= 0))
         {
-            var clips = validation.Clips.Where(clip => clip.SegmentObjectId == segment.ObjectId).ToArray();
+            throw new ArgumentOutOfRangeException(nameof(sources));
+        }
+
+        var segments = sources.SelectMany(source => source.Validation.Segments.Select(segment => new
+        {
+            Segment = segment,
+            Source = source
+        }))
+        .GroupBy(item => item.Segment.ObjectId)
+        .Select(group => group.First())
+        .OrderByDescending(item => item.Segment.ObjectId == selectedSegmentId)
+        .ThenBy(item => SegmentLabel(item.Segment, item.Source.Validation.Clips, mediaNames), StringComparer.OrdinalIgnoreCase)
+        .ThenBy(item => item.Segment.ObjectId)
+        .ToArray();
+
+        var tracks = segments.SelectMany(item =>
+        {
+            var segment = item.Segment;
+            var clips = item.Source.Validation.Clips.Where(clip => clip.SegmentObjectId == segment.ObjectId).ToArray();
             var label = SegmentLabel(segment, clips, mediaNames);
+            var timeRatio = item.Source.TimeRatio;
 
             return segment.TrackObjectIds.Concat(clips.Select(clip => clip.TrackObjectId)).Distinct()
                 .Select(trackId => new MusicTimelineTrack(
@@ -148,29 +182,38 @@ public static class MusicTimelineImporter
                     segment.ObjectId,
                     segment.DurationMs * timeRatio));
         }).ToArray();
-        var markers = segments.SelectMany(segment => segment.Markers.Select(marker => new
+        var markers = segments.SelectMany(item => item.Segment.Markers.Select(marker => new
         {
             marker.Id,
             Name = MarkerName(marker.Id),
-            Position = marker.PositionMs * timeRatio,
+            Position = marker.PositionMs * item.Source.TimeRatio,
             marker.PositionOffset,
-            SegmentObjectId = segment.ObjectId
+            SegmentObjectId = item.Segment.ObjectId
         }))
-            .GroupBy(marker => (marker.SegmentObjectId, marker.Id, RoundedPosition: Math.Round(marker.Position, 3)))
-            .Select(group => new MusicTimelineMarker(
-                group.Key.Id,
-                group.Count() == 1 ? group.First().Name : $"{group.First().Name} x{group.Count()}",
-                group.Average(marker => marker.Position),
-                group.Key.SegmentObjectId,
-                group.Select(marker => marker.PositionOffset).OfType<int>().Distinct().ToArray()))
-            .OrderBy(marker => marker.PositionMs)
-            .ToArray();
-        var length = segments.Select(segment => segment.DurationMs * timeRatio).DefaultIfEmpty(1).Max();
+        .GroupBy(marker => (marker.SegmentObjectId, marker.Id, RoundedPosition: Math.Round(marker.Position, 3)))
+        .Select(group => new MusicTimelineMarker(
+            group.Key.Id,
+            group.Count() == 1 ? group.First().Name : $"{group.First().Name} x{group.Count()}",
+            group.Average(marker => marker.Position),
+            group.Key.SegmentObjectId,
+            group.Select(marker => marker.PositionOffset).OfType<int>().Distinct().ToArray()))
+        .OrderBy(marker => marker.PositionMs)
+        .ToArray();
 
-        document.Reset(bpm, Math.Max(1, length), tracks, markers, snapEnabled: snapEnabled);
+        var length = segments.Select(item => item.Segment.DurationMs * item.Source.TimeRatio).DefaultIfEmpty(1).Max();
+        var segmentTempos = segments.ToDictionary(item => item.Segment.ObjectId, item => item.Source.Bpm);
+        var defaultBpm = sources.First().Bpm;
+
+        document.Reset(
+            defaultBpm,
+            Math.Max(1, length),
+            tracks,
+            markers,
+            snapEnabled: snapEnabled,
+            segmentTempos: segmentTempos);
 
         return new MusicScopeTimelineImportResult(
-            validation.ScopeObjectId,
+            sources.First().Validation.ScopeObjectId,
             segments.Length,
             tracks.Length,
             tracks.Sum(track => track.Clips.Length),

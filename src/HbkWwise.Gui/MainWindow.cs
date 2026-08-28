@@ -3188,6 +3188,19 @@ public sealed partial class MainWindow : Window
 
         ResetTransportForTimelineNavigation();
 
+        var alreadyOpen = timelineTabItems.FirstOrDefault(tab =>
+            tab.OccurrenceMediaId is null
+            && tab.Snapshot.LoadedTimeline is { } open
+            && open.Event.Id == context.Event.Id
+            && open.Event.Bank.Equals(context.Event.Bank, StringComparison.OrdinalIgnoreCase)
+            && open.Validation.Segments.Any(segment => segment.ObjectId == context.SegmentId));
+
+        if (alreadyOpen is not null)
+        {
+            FocusExistingEventTimeline(alreadyOpen, context.SegmentId);
+            return;
+        }
+
         indexOperation?.Cancel();
         using var operation = new CancellationTokenSource();
 
@@ -3200,27 +3213,12 @@ public sealed partial class MainWindow : Window
                 tab.OccurrenceMediaId is null
                 && tab.Snapshot.LoadedTimeline is { } open
                 && open.Event.Id == resolved.Event.Id
-                && open.Scope.ObjectId == resolved.Scope.ObjectId);
+                && open.Event.Bank.Equals(resolved.Event.Bank, StringComparison.OrdinalIgnoreCase));
+
             DiscardReplaceablePreviewTabs(existing);
             if (existing is not null)
             {
-                if (!ReferenceEquals(existing, activeTimelineTab))
-                {
-                    SaveActiveTimelineTab();
-                    switchingTimelineTab = true;
-                    activeTimelineTab = existing;
-                    timelineTabList.SelectedItem = existing;
-                    switchingTimelineTab = false;
-                    RestoreTimelineSnapshot(existing.Snapshot);
-                }
-
-                var selectedSegment = loadedTimeline!.Validation.Segments
-                    .Single(segment => segment.ObjectId == context.SegmentId);
-                loadedTimeline = loadedTimeline with { Segment = selectedSegment };
-                timeline.SetSegmentFocus(context.SegmentId);
-                UpdateSelectedSegmentTempoUi();
-                SaveActiveTimelineTab();
-                SetStatus($"Focused Music Segment {context.SegmentId} in {existing.Title}");
+                FocusExistingEventTimeline(existing, context.SegmentId);
                 return;
             }
 
@@ -3232,7 +3230,7 @@ public sealed partial class MainWindow : Window
 
             var tab = new TimelineTab(
                 Guid.NewGuid(),
-                $"{resolved.Event.Name} | {resolved.Scope.ObjectId}",
+                resolved.Event.Name,
                 CaptureTimelineSnapshot(),
                 isPreview: true);
 
@@ -3265,6 +3263,45 @@ public sealed partial class MainWindow : Window
                 SetBusy(false);
             }
         }
+    }
+
+    private void FocusExistingEventTimeline(TimelineTab tab, uint segmentId)
+    {
+        DiscardReplaceablePreviewTabs(tab);
+        if (!ReferenceEquals(tab, activeTimelineTab))
+        {
+            SaveActiveTimelineTab();
+            switchingTimelineTab = true;
+            activeTimelineTab = tab;
+            timelineTabList.SelectedItem = tab;
+            switchingTimelineTab = false;
+            RestoreTimelineSnapshot(tab.Snapshot);
+        }
+
+        loadedTimeline = SelectLoadedSegment(loadedTimeline!, segmentId);
+        timeline.SetSegmentFocus(segmentId);
+        UpdateSelectedSegmentTempoUi();
+        SaveActiveTimelineTab();
+        SetStatus($"Focused Music Segment {segmentId} in {tab.Title}");
+    }
+
+    private static LoadedEventTimeline SelectLoadedSegment(LoadedEventTimeline timeline, uint segmentId)
+    {
+        var timingScope = timeline.AllTimingScopes
+            .Where(scope => scope.Validation.Segments.Any(segment => segment.ObjectId == segmentId))
+            .OrderBy(scope => scope.Scope.ObjectIds.Length)
+            .FirstOrDefault()
+            ?? throw new InvalidDataException($"Segment {segmentId} is absent from the loaded Event timeline.");
+
+        var segment = timingScope.Validation.Segments.Single(item => item.ObjectId == segmentId);
+
+        return timeline with
+        {
+            Scope = timingScope.Scope,
+            Segment = segment,
+            AuthoredBpm = timingScope.AuthoredBpm,
+            PreviewBpm = timingScope.AuthoredBpm
+        };
     }
 
     private async Task OpenMediaOccurrencesAsync(ClipCatalogItem item)
@@ -3596,40 +3633,111 @@ public sealed partial class MainWindow : Window
     {
         var localIndex = index ?? throw new InvalidOperationException("No index is loaded.");
         var scopes = await Task.Run(() => BnkRetimer.FindTimingScopes(context.XmlPath, context.Event.Name), cancellationToken);
-        var scope = scopes
-            .Where(item => item.ObjectIds.Contains(context.SegmentId))
-            .OrderBy(item => item.ObjectIds.Length)
-            .FirstOrDefault()
-            ?? throw new InvalidDataException(
-                $"Segment {context.SegmentId} has no active-meter timing scope.");
-        var authoredBpm = scope.Bpms.First();
-        var validation = await Task.Run(
-            () => BnkTimelineValidator.Validate(
+        var validated = await Task.Run(() => scopes.Select(scope =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var authoredBpm = scope.Bpms.FirstOrDefault();
+            if (authoredBpm <= 0)
+            {
+                return null;
+            }
+
+            var validation = BnkTimelineValidator.Validate(
                 context.XmlPath,
                 scope.ObjectId,
                 new Dictionary<uint, double>(),
                 authoredBpm,
                 authoredBpm,
-                eventNameOrId: context.Event.Name
-            ),
-            cancellationToken
-        );
+                eventNameOrId: context.Event.Name);
+            return validation.Segments.Length == 0
+                ? null
+                : new LoadedTimingScope(scope, validation, authoredBpm);
+        }).OfType<LoadedTimingScope>().ToArray(), cancellationToken);
 
-        var segment = validation.Segments.SingleOrDefault(item => item.ObjectId == context.SegmentId)
-            ?? throw new InvalidDataException($"Segment {context.SegmentId} was not found inside timing scope {scope.ObjectId}.");
+        var timingScopes = AssignSegmentsToMostSpecificScopes(validated);
+        var selectedScope = timingScopes
+            .Where(item => item.Validation.Segments.Any(segment => segment.ObjectId == context.SegmentId))
+            .OrderBy(item => item.Scope.ObjectIds.Length)
+            .FirstOrDefault()
+            ?? throw new InvalidDataException(
+                $"Segment {context.SegmentId} has no active-meter timing scope.");
+        var segment = selectedScope.Validation.Segments.Single(item => item.ObjectId == context.SegmentId);
+        var combinedValidation = CombineTimelineValidations(timingScopes, selectedScope.Scope.ObjectId);
 
         var mediaNames = localIndex.Media.GroupBy(media => media.Id)
             .ToDictionary(group => group.Key, group => group.First().SourceName);
 
         return new LoadedEventTimeline(
             context.Event,
-            scope,
-            validation,
+            selectedScope.Scope,
+            combinedValidation,
             segment,
             mediaNames,
-            authoredBpm,
-            authoredBpm
+            selectedScope.AuthoredBpm,
+            selectedScope.AuthoredBpm,
+            timingScopes
         );
+    }
+
+    private static LoadedTimingScope[] AssignSegmentsToMostSpecificScopes(
+        IReadOnlyCollection<LoadedTimingScope> timingScopes)
+    {
+        var owners = timingScopes.SelectMany(scope => scope.Validation.Segments.Select(segment => new
+        {
+            segment.ObjectId,
+            TimingScope = scope
+        }))
+            .GroupBy(item => item.ObjectId)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(item => item.TimingScope.Scope.ObjectIds.Length).First().TimingScope.Scope.ObjectId);
+
+        return timingScopes.Select(scope =>
+        {
+            var segmentIds = scope.Validation.Segments
+                .Where(segment => owners.GetValueOrDefault(segment.ObjectId) == scope.Scope.ObjectId)
+                .Select(segment => segment.ObjectId)
+                .ToHashSet();
+
+            var trackIds = scope.Validation.Clips
+                .Where(clip => clip.SegmentObjectId is { } id && segmentIds.Contains(id))
+                .Select(clip => clip.TrackObjectId)
+                .ToHashSet();
+
+            var validation = scope.Validation with
+            {
+                Segments = scope.Validation.Segments.Where(segment => segmentIds.Contains(segment.ObjectId)).ToArray(),
+                Clips = scope.Validation.Clips.Where(clip => clip.SegmentObjectId is { } id && segmentIds.Contains(id)).ToArray(),
+                DurationValidation = scope.Validation.DurationValidation with
+                {
+                    ClipUsages = scope.Validation.DurationValidation.ClipUsages
+                        .Where(usage => trackIds.Contains(usage.ObjectId))
+                        .ToArray()
+                }
+            };
+            return scope with { Validation = validation };
+        }).Where(scope => scope.Validation.Segments.Length > 0).ToArray();
+    }
+
+    private static BnkTimelineValidation CombineTimelineValidations(
+        IReadOnlyCollection<LoadedTimingScope> timingScopes,
+        uint primaryScopeId)
+    {
+        var validations = timingScopes.Select(scope => scope.Validation).ToArray();
+        return new BnkTimelineValidation(
+            primaryScopeId,
+            1,
+            validations.SelectMany(validation => validation.Segments).DistinctBy(segment => segment.ObjectId).ToArray(),
+            validations.SelectMany(validation => validation.Clips)
+                .DistinctBy(clip => (clip.TrackObjectId, clip.SegmentObjectId, clip.SourceIdOffset, clip.PlaylistIndex))
+                .ToArray(),
+            validations.SelectMany(validation => validation.Transitions).Distinct().ToArray(),
+            validations.SelectMany(validation => validation.Loops).Distinct().ToArray(),
+            new BnkDurationValidation(
+                primaryScopeId,
+                validations.SelectMany(validation => validation.DurationValidation.ClipUsages).Distinct().ToArray(),
+                validations.SelectMany(validation => validation.DurationValidation.Checks).Distinct().ToArray()),
+            validations.SelectMany(validation => validation.Issues).Distinct().ToArray());
     }
 
     private async Task<string> EnsureBankXmlAsync(
@@ -3719,13 +3827,13 @@ public sealed partial class MainWindow : Window
         {
             timeline.SetStandaloneAudioMode(false);
             timeline.SetSourceEvent(loadedTimeline.Event.Name);
-            imported = MusicTimelineImporter.LoadScope(
+            imported = MusicTimelineImporter.LoadScopes(
                 document,
-                loadedTimeline.Validation,
-                loadedTimeline.AuthoredBpm,
+                loadedTimeline.AllTimingScopes.Select(scope => new MusicTimelineScopeSource(
+                    scope.Validation,
+                    scope.AuthoredBpm)).ToArray(),
                 loadedTimeline.MediaNames,
                 snapEnabled.IsChecked == true,
-                1,
                 loadedTimeline.Segment.ObjectId
             );
 
@@ -3750,13 +3858,13 @@ public sealed partial class MainWindow : Window
         var issues = loadedTimeline.Validation.Issues.Length;
         timelineHeading.Text = $"EVENT COMPOSITION  |  {timeline.VisibleSegmentCount} segments  |  {timeline.VisibleTracks.Count} tracks  |  click a segment header to audition/edit its BPM";
         ShowInspector($"MUSIC COMPOSITION\n\nEvent: {loadedTimeline.Event.Name}\nBank: {loadedTimeline.Event.Bank}\n"
-            + $"Timing scope: {loadedTimeline.Scope.ObjectId}\nSelected segment: {loadedTimeline.Segment.ObjectId}\n"
+            + $"Timing scopes: {loadedTimeline.AllTimingScopes.Count}\nSelected scope: {loadedTimeline.Scope.ObjectId}\nSelected segment: {loadedTimeline.Segment.ObjectId}\n"
             + $"Inherited BPM: {loadedTimeline.AuthoredBpm:0.###}\nSelected segment BPM: {document.SegmentBpm(loadedTimeline.Segment.ObjectId):0.###}\n"
             + $"Loaded segment timelines: {imported.Segments}\n"
             + $"All scope tracks: {imported.Tracks}\nAll scope clips: {imported.Clips}\n"
             + $"Distinct media: {imported.Media}\nVisible markers: {imported.Markers}\nIssues: {issues}\n"
             + $"Replacements: {scopeReplacements.Count}\nImported playlist media: {ActiveStructuralImports().Length}\n\n"
-            + "All segments reachable in this Event timing scope are stacked under one cursor and horizontal scroll. Each segment retains its own BPM and beat grid.");
+            + "All editable Music Segments reached by this Event are stacked under one cursor and horizontal scroll. Each segment retains its own BPM and beat grid.");
         SetStatus($"Loaded {imported.Segments} event segments ({imported.Tracks} tracks); selected {loadedTimeline.Segment.ObjectId} at {document.SegmentBpm(loadedTimeline.Segment.ObjectId):0.###} BPM");
         ScheduleWaveforms(clear: true);
         if (!projectDirty)
@@ -3865,7 +3973,7 @@ public sealed partial class MainWindow : Window
 
         var title = loadedTimeline is null
             ? "Manual arrangement"
-            : $"{loadedTimeline.Event.Name} | {loadedTimeline.Scope.ObjectId}";
+            : loadedTimeline.Event.Name;
 
         var tab = new TimelineTab(Guid.NewGuid(), title, CaptureTimelineSnapshot());
 
@@ -3967,8 +4075,10 @@ public sealed partial class MainWindow : Window
     private static bool SameCompositionScope(TimelineSnapshot left, TimelineSnapshot right) =>
         left.LoadedTimeline is { } leftTimeline
         && right.LoadedTimeline is { } rightTimeline
-        && leftTimeline.Scope.ObjectId == rightTimeline.Scope.ObjectId
-        && leftTimeline.Event.Bank.Equals(rightTimeline.Event.Bank, StringComparison.OrdinalIgnoreCase);
+        && leftTimeline.Event.Bank.Equals(rightTimeline.Event.Bank, StringComparison.OrdinalIgnoreCase)
+        && leftTimeline.AllTimingScopes.Select(scope => scope.Scope.ObjectId)
+            .Intersect(rightTimeline.AllTimingScopes.Select(scope => scope.Scope.ObjectId))
+            .Any();
 
     private static int SnapshotEditScore(TimelineSnapshot snapshot)
     {
@@ -3984,7 +4094,8 @@ public sealed partial class MainWindow : Window
             .Count(snapshot.Imports.ContainsKey);
         var replacements = snapshot.Tracks.SelectMany(track => track.Clips)
             .Count(clip => clip.SourcePath is not null || clip.ReplacementMediaId is not null);
-        var tempos = snapshot.SegmentBpms.Count(item => !Near(item.Value, composition.AuthoredBpm));
+        var tempos = snapshot.SegmentBpms.Count(item =>
+            !Near(item.Value, AuthoredBpmForSegment(composition, item.Key)));
         var originals = composition.Validation.Clips
             .Where(clip => clip.SourceIdOffset is not null)
             .GroupBy(clip => clip.SourceIdOffset!.Value)
@@ -4002,7 +4113,7 @@ public sealed partial class MainWindow : Window
                 return false;
             }
 
-            var ratio = composition.AuthoredBpm
+            var ratio = AuthoredBpmForSegment(composition, item.Track.SegmentObjectId)
                 / SegmentBpm(snapshot.SegmentBpms, composition, item.Track.SegmentObjectId);
             return !Near(item.Clip.StartMs, Math.Max(0, original.TimelineStartMs) * ratio)
                 || !Near(item.Clip.SourceOffsetMs, Math.Max(0, original.BeginTrimMs) * ratio)
@@ -4515,29 +4626,30 @@ public sealed partial class MainWindow : Window
             RestoreTimelineSnapshot(activeTimelineTab.Snapshot);
         }
 
-        var compositionTabs = timelineTabItems
+        var compositionSnapshots = timelineTabItems
             .Where(tab => tab.Snapshot.LoadedTimeline is not null && tab.StandaloneMedia is null)
-            .GroupBy(tab => CompositionScopeKey(tab.Snapshot), StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.OrderBy(tab => SnapshotEditScore(tab.Snapshot)).Last())
-            .Where(tab => SnapshotEditScore(tab.Snapshot) > 0)
+            .SelectMany(tab => tab.Snapshot.LoadedTimeline!.AllTimingScopes.Select(scope =>
+                SnapshotForTimingScope(tab.Snapshot, scope)))
+            .GroupBy(CompositionScopeKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderBy(SnapshotEditScore).Last())
+            .Where(snapshot => SnapshotEditScore(snapshot) > 0)
             .ToArray();
         var soundTabs = timelineTabItems
             .Where(tab => tab.StandaloneMedia is { } media && HasStandaloneEdits(tab.Snapshot, media))
             .GroupBy(tab => tab.StandaloneMedia!.Id)
             .Select(group => group.Last())
             .ToArray();
-        if (compositionTabs.Length == 0 && soundTabs.Length == 0)
+        if (compositionSnapshots.Length == 0 && soundTabs.Length == 0)
         {
             SetStatus("Make at least one audio or timing edit anywhere in the project first", GuiLogLevel.Warning);
             return;
         }
 
-        var requests = new List<ScopedModPakRequest>(compositionTabs.Length);
+        var requests = new List<ScopedModPakRequest>(compositionSnapshots.Length);
         try
         {
-            foreach (var tab in compositionTabs)
+            foreach (var snapshot in compositionSnapshots)
             {
-                var snapshot = tab.Snapshot;
                 var composition = snapshot.LoadedTimeline!;
                 var activeImports = ActiveStructuralImports(snapshot);
                 var activeReplacements = ActiveScopeReplacements(snapshot);
@@ -4820,7 +4932,8 @@ public sealed partial class MainWindow : Window
                 && item.SegmentObjectId == placement.Track.SegmentObjectId)
                 ?? throw new InvalidDataException(
                     $"Block {clip.Name} was moved to another Wwise track. Cross-track reassignment is not supported yet.");
-            var ratio = composition.AuthoredBpm / SegmentBpm(segmentBpms, composition, placement.Track.SegmentObjectId);
+            var ratio = AuthoredBpmForSegment(composition, placement.Track.SegmentObjectId)
+                / SegmentBpm(segmentBpms, composition, placement.Track.SegmentObjectId);
             var expectedStart = Math.Max(0, original.TimelineStartMs) * ratio;
             var expectedSourceOffset = Math.Max(0, original.BeginTrimMs) * ratio;
             var expectedDuration = Math.Max(
@@ -4859,7 +4972,8 @@ public sealed partial class MainWindow : Window
                 }
 
                 var expected = original.Marker.PositionMs
-                    * composition.AuthoredBpm / SegmentBpm(segmentBpms, composition, original.SegmentId);
+                    * AuthoredBpmForSegment(composition, original.SegmentId)
+                    / SegmentBpm(segmentBpms, composition, original.SegmentId);
                 return Near(marker.PositionMs, expected)
                     ? null
                     : new BnkTimelineMarkerEdit(offset, marker.PositionMs);
@@ -4882,7 +4996,8 @@ public sealed partial class MainWindow : Window
                     .DefaultIfEmpty(segment.DurationMs)
                     .Max();
                 var expected = segment.DurationMs
-                    * composition.AuthoredBpm / SegmentBpm(segmentBpms, composition, segment.ObjectId);
+                    * AuthoredBpmForSegment(composition, segment.ObjectId)
+                    / SegmentBpm(segmentBpms, composition, segment.ObjectId);
                 return Near(current, expected)
                     ? null
                     : new BnkTimelineSegmentDurationEdit(segment.DurationOffset!.Value, current);
@@ -5654,6 +5769,13 @@ public sealed partial class MainWindow : Window
         LoadedEventTimeline composition,
         uint? segmentId) => segmentId is { } id && segmentBpms.TryGetValue(id, out var bpm)
             ? bpm
+            : AuthoredBpmForSegment(composition, segmentId);
+
+    private static double AuthoredBpmForSegment(LoadedEventTimeline composition, uint? segmentId) =>
+        segmentId is { } id
+            ? composition.AllTimingScopes.FirstOrDefault(scope =>
+                scope.Validation.Segments.Any(segment => segment.ObjectId == id))?.AuthoredBpm
+                ?? composition.AuthoredBpm
             : composition.AuthoredBpm;
 
     private async void CalculateSelectedBpmAsync(object? sender, RoutedEventArgs e)
@@ -6786,6 +6908,11 @@ public sealed partial class MainWindow : Window
         IReadOnlySet<uint> AudioEvents,
         IReadOnlySet<string> AudioBanks);
 
+    private sealed record LoadedTimingScope(
+        BnkTimingScope Scope,
+        BnkTimelineValidation Validation,
+        double AuthoredBpm);
+
     private sealed record LoadedEventTimeline(
         EventRecord Event,
         BnkTimingScope Scope,
@@ -6793,7 +6920,55 @@ public sealed partial class MainWindow : Window
         BnkTimelineSegment Segment,
         IReadOnlyDictionary<uint, string> MediaNames,
         double AuthoredBpm,
-        double PreviewBpm);
+        double PreviewBpm,
+        LoadedTimingScope[]? TimingScopes = null)
+    {
+        public IReadOnlyList<LoadedTimingScope> AllTimingScopes => TimingScopes is { Length: > 0 }
+            ? TimingScopes
+            : [new LoadedTimingScope(Scope, Validation, AuthoredBpm)];
+    }
+
+    private static TimelineSnapshot SnapshotForTimingScope(
+        TimelineSnapshot snapshot,
+        LoadedTimingScope timingScope)
+    {
+        var source = snapshot.LoadedTimeline
+            ?? throw new InvalidOperationException("A scoped snapshot requires a loaded Event timeline.");
+
+        var segmentIds = timingScope.Validation.Segments.Select(segment => segment.ObjectId).ToHashSet();
+        var selected = segmentIds.Contains(source.Segment.ObjectId)
+            ? timingScope.Validation.Segments.Single(segment => segment.ObjectId == source.Segment.ObjectId)
+            : timingScope.Validation.Segments.First();
+
+        var timeline = new LoadedEventTimeline(
+            source.Event,
+            timingScope.Scope,
+            timingScope.Validation,
+            selected,
+            source.MediaNames,
+            timingScope.AuthoredBpm,
+            timingScope.AuthoredBpm,
+            [timingScope]);
+
+        var tracks = snapshot.Tracks
+            .Where(track => track.SegmentObjectId is { } segmentId && segmentIds.Contains(segmentId))
+            .ToArray();
+
+        return snapshot with
+        {
+            LoadedTimeline = timeline,
+            TimelineLengthMs = tracks.Select(track => track.LengthMs).OfType<double>().DefaultIfEmpty(1).Max(),
+            Tracks = tracks,
+            Markers = snapshot.Markers
+                .Where(marker => marker.SegmentObjectId is { } segmentId && segmentIds.Contains(segmentId))
+                .ToArray(),
+            SegmentBpms = snapshot.SegmentBpms
+                .Where(item => segmentIds.Contains(item.Key))
+                .ToDictionary(item => item.Key, item => item.Value),
+            MetronomeSegments = snapshot.MetronomeSegments.Where(segmentIds.Contains).ToHashSet(),
+            VisibleSegmentIds = snapshot.VisibleSegmentIds?.Where(segmentIds.Contains).ToHashSet()
+        };
+    }
 
     private sealed record MediaOccurrenceTimeline(
         LoadedEventTimeline Timeline,

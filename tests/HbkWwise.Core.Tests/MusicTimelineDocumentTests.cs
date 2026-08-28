@@ -479,6 +479,37 @@ public sealed class MusicTimelineDocumentTests
     }
 
     [Fact]
+    public void LoadScopes_StacksEveryScopeAndKeepsEachSegmentBpm()
+    {
+        static BnkTimelineValidation Scope(uint scopeId, uint segmentId, uint trackId, uint mediaId) => new(
+            scopeId,
+            1,
+            [new BnkTimelineSegment(segmentId, 4_000, [trackId], [new BnkTimelineMarker(43573010, 0)])],
+            [new BnkTimelineClip(trackId, segmentId, mediaId, (int)mediaId, 0, 0, 0, 4_000, 0, 4_000, false)],
+            [],
+            [],
+            new BnkDurationValidation(scopeId, [], []),
+            []);
+
+        var document = new MusicTimelineDocument();
+        var result = MusicTimelineImporter.LoadScopes(
+            document,
+            [
+                new MusicTimelineScopeSource(Scope(10, 100, 101, 1), 90),
+                new MusicTimelineScopeSource(Scope(20, 200, 201, 2), 140)
+            ],
+            new Dictionary<uint, string> { [1] = "Music\\Verse.wav", [2] = "Music\\Chorus.wav" },
+            selectedSegmentId: 200);
+
+        Assert.Equal(2, result.Segments);
+        Assert.Equal(2, result.Tracks);
+        Assert.Equal(2, result.Clips);
+        Assert.Equal([200u, 100u], document.Tracks.Select(track => track.SegmentObjectId));
+        Assert.Equal(90, document.SegmentBpm(100));
+        Assert.Equal(140, document.SegmentBpm(200));
+    }
+
+    [Fact]
     public void TrackMixControls_AreExclusiveAndUndoable()
     {
         var document = new MusicTimelineDocument();

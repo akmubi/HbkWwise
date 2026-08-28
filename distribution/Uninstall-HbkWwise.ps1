@@ -1,8 +1,7 @@
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [string]$InstallDirectory,
-    [switch]$RemoveUserData
+    [string]$InstallDirectory
 )
 
 Set-StrictMode -Version Latest
@@ -55,13 +54,11 @@ if (Test-Path -LiteralPath $target) {
     }
 }
 
-if ($RemoveUserData) {
-    $userData = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'HbkWwise'))
-    $expectedParent = [System.IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\') + '\'
-    if (-not $userData.StartsWith($expectedParent, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Unsafe user-data path: $userData"
-    }
-    Remove-Item -LiteralPath $userData -Recurse -Force -ErrorAction SilentlyContinue
+$userData = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA 'HbkWwise'))
+$expectedParent = [System.IO.Path]::GetFullPath($env:LOCALAPPDATA).TrimEnd('\') + '\'
+if (-not $userData.StartsWith($expectedParent, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Unsafe user-data path: $userData"
 }
+Remove-Item -LiteralPath $userData -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host 'HBK Wwise uninstalled.'

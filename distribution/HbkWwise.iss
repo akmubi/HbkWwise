@@ -50,3 +50,4 @@ Filename: "{app}\HbkWwise.exe"; Description: "Launch HBK Wwise"; Flags: nowait p
 
 [UninstallDelete]
 Type: files; Name: "{app}\tools\win-x64\oo2core_9_win64.dll"
+Type: filesandordirs; Name: "{localappdata}\HbkWwise"

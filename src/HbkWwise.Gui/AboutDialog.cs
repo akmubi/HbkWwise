@@ -44,7 +44,7 @@ internal sealed class AboutDialog : Window
                 },
                 new SelectableTextBlock
                 {
-                    Text = "Copyright © 2026 HBK Wwise contributors\nLicensed under the MIT License.",
+                    Text = "Copyright © 2026 akmubi\nLicensed under the MIT License.",
                     TextWrapping = TextWrapping.Wrap
                 },
                 new SelectableTextBlock

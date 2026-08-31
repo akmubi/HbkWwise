@@ -15,7 +15,7 @@
 AppId={{D2449822-5657-4C87-AC1F-0F3CECF55D54}
 AppName=HBK Wwise
 AppVersion={#AppVersion}
-AppPublisher=HBK Wwise contributors
+AppPublisher=akmubi
 DefaultDirName={localappdata}\Programs\HBK Wwise
 DefaultGroupName=HBK Wwise
 DisableProgramGroupPage=yes

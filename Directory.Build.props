@@ -7,9 +7,9 @@
     <LangVersion>latest</LangVersion>
     <Version>0.1.0</Version>
     <Product>HBK Wwise</Product>
-    <Authors>HBK Wwise contributors</Authors>
-    <Company>HBK Wwise contributors</Company>
-    <Copyright>Copyright © 2026 HBK Wwise contributors</Copyright>
+    <Authors>akmubi</Authors>
+    <Company>akmubi</Company>
+    <Copyright>Copyright © 2026 akmubi</Copyright>
     <Description>Wwise audio modding workbench for Hi-Fi RUSH.</Description>
     <NeutralLanguage>en</NeutralLanguage>
   </PropertyGroup>
